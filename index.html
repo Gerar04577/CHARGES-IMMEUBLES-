@@ -12,7 +12,7 @@
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://unpkg.com/html-docx-js@0.3.1/dist/html-docx.js"></script>
+<script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
 <style>
   html, body { margin:0; padding:0; }
   #root { min-height: 100vh; }
@@ -122,6 +122,173 @@ function EvolutionChart({ readings, dataKey, color, unitLabel }) {
       </div>
     </div>
   );
+}
+
+/* ============================================================
+   MINIMAL, SELF-CONTAINED .DOCX BUILDER (real OOXML via JSZip)
+   ============================================================ */
+function xmlEscape(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+// twips: 1440 per inch
+function docxPara(text, opts = {}) {
+  const { bold, italic, color, size, align, spacingAfter } = opts;
+  const rPr = `${bold ? "<w:b/>" : ""}${italic ? "<w:i/>" : ""}${color ? `<w:color w:val="${color}"/>` : ""}${size ? `<w:sz w:val="${size}"/><w:szCs w:val="${size}"/>` : ""}`;
+  const pPr = `${align ? `<w:jc w:val="${align}"/>` : ""}${spacingAfter !== undefined ? `<w:spacing w:after="${spacingAfter}"/>` : ""}`;
+  // text may contain simple <b>...</b> markers for inline bold spans
+  const runs = String(text).split(/(<b>.*?<\/b>)/g).filter(Boolean).map(part => {
+    const isBold = part.startsWith("<b>");
+    const clean = xmlEscape(part.replace(/<\/?b>/g, ""));
+    const runPr = `${(bold || isBold) ? "<w:b/>" : ""}${italic ? "<w:i/>" : ""}${color ? `<w:color w:val="${color}"/>` : ""}${size ? `<w:sz w:val="${size}"/><w:szCs w:val="${size}"/>` : ""}`;
+    return `<w:r>${runPr ? `<w:rPr>${runPr}</w:rPr>` : ""}<w:t xml:space="preserve">${clean}</w:t></w:r>`;
+  }).join("");
+  return `<w:p>${pPr ? `<w:pPr>${pPr}</w:pPr>` : ""}${runs || `<w:r>${rPr ? `<w:rPr>${rPr}</w:rPr>` : ""}<w:t xml:space="preserve"></w:t></w:r>`}</w:p>`;
+}
+
+function docxCell(text, opts = {}) {
+  const { bold, color, bg, align = "center", width } = opts;
+  const shd = bg ? `<w:shd w:val="clear" w:color="auto" w:fill="${bg}"/>` : "";
+  const tcW = width ? `<w:tcW w:w="${width}" w:type="dxa"/>` : `<w:tcW w:w="0" w:type="auto"/>`;
+  const vAlign = `<w:vAlign w:val="center"/>`;
+  return `<w:tc><w:tcPr>${tcW}${shd}${vAlign}</w:tcPr>${docxPara(text, { bold, color, align, size: 18 })}</w:tc>`;
+}
+
+function docxRow(cells) {
+  return `<w:tr>${cells.join("")}</w:tr>`;
+}
+
+function docxTable(rows, opts = {}) {
+  const { widthPct = 5000 } = opts;
+  return `<w:tbl><w:tblPr><w:tblW w:w="${widthPct}" w:type="pct"/><w:tblBorders>
+    <w:top w:val="single" w:sz="4" w:color="999999"/><w:left w:val="single" w:sz="4" w:color="999999"/>
+    <w:bottom w:val="single" w:sz="4" w:color="999999"/><w:right w:val="single" w:sz="4" w:color="999999"/>
+    <w:insideH w:val="single" w:sz="4" w:color="999999"/><w:insideV w:val="single" w:sz="4" w:color="999999"/>
+  </w:tblBorders><w:tblLayout w:type="autofit"/></w:tblPr><w:tblGrid/>${rows.join("")}</w:tbl>`;
+}
+
+// Builds the Word document body XML for a décompte.
+function buildDecompteDocxXml(buildingName, unitName, tenantName, period, lines, totals) {
+  const INK_HEX = "2E4E3F", PAPER_HEX = "F6F2EA", RED_HEX = "C0392B", MUTED_HEX = "8A8478";
+  const diffNegative = totals.diff < 0;
+  const diffText = (diffNegative ? "-" : "") + fmtEUR(Math.abs(totals.diff));
+
+  const titleTable = docxTable([
+    docxRow([
+      docxCell(buildingName.toUpperCase(), { bold: true, color: "FFFFFF", bg: INK_HEX }),
+      docxCell(unitName.toUpperCase(), { bold: true, color: "FFFFFF", bg: INK_HEX }),
+      docxCell((tenantName || "").toUpperCase(), { bold: true, color: "FFFFFF", bg: INK_HEX }),
+    ]),
+  ]);
+
+  const explanation = [
+    docxPara("<b>Veuillez trouver ci-après le tableau reprenant vos consommations d'énergie (mazout, gaz et électricité) et d'eau pour le(s) mois passé(s).</b> Nous attirons votre attention sur la colonne <b>« différence »</b> qui montre, en cas de valeur négative, le dépassement de vos consommations par rapport à vos provisions de charges.", { size: 20, align: "both", spacingAfter: 120 }),
+    docxPara("En hiver, il est normal d'avoir une consommation plus élevée. Mais nous vous invitons à faire attention à une trop grande différence, qui vous sera logiquement comptabilisée chaque année ou avant votre départ prématuré éventuel.", { size: 20, align: "both", spacingAfter: 120 }),
+    docxPara("Les taxes poubelles et le Wifi, pour les locataires concernés, ne sont bien évidemment pas comptabilisés dans votre provision de charges, puisque ce décompte ne concerne que le calcul de l'énergie et de l'eau.", { size: 20, align: "both", spacingAfter: 200 }),
+  ].join("");
+
+  const headerRow = docxRow([
+    docxCell(period, { bold: true, color: "FFFFFF", bg: INK_HEX, align: "left" }),
+    docxCell("Consommation", { bold: true, color: "FFFFFF", bg: INK_HEX }),
+    docxCell("Coût (€)", { bold: true, color: "FFFFFF", bg: INK_HEX }),
+    docxCell("Jours", { bold: true, color: "FFFFFF", bg: INK_HEX }),
+    docxCell("Total charges", { bold: true, color: "FFFFFF", bg: INK_HEX }),
+    docxCell("Provision", { bold: true, color: "FFFFFF", bg: INK_HEX }),
+    docxCell("Différence", { bold: true, color: "FFFFFF", bg: INK_HEX }),
+  ]);
+
+  const dataRows = lines.map(l => docxRow([
+    docxCell(l.label, { bold: true, align: "left" }),
+    docxCell(String(l.conso ?? "")),
+    docxCell(String(l.cost ?? "")),
+    docxCell(String(l.days ?? "")),
+    docxCell(l.totalCell || ""),
+    docxCell(l.provCell || ""),
+    docxCell(l.diffCell || "", { color: l.diffCell ? (l.diffCell.startsWith("-") ? RED_HEX : undefined) : undefined }),
+  ]));
+
+  const totalRow = docxRow([
+    docxCell("Différence Totale", { bold: true, bg: PAPER_HEX, align: "left", width: 6000 }),
+    docxCell("", { bg: PAPER_HEX }), docxCell("", { bg: PAPER_HEX }), docxCell("", { bg: PAPER_HEX }),
+    docxCell("", { bg: PAPER_HEX }), docxCell("", { bg: PAPER_HEX }),
+    docxCell(diffText, { bold: true, bg: PAPER_HEX, color: diffNegative ? RED_HEX : undefined }),
+  ]);
+
+  const chargesTable = docxTable([headerRow, ...dataRows, totalRow]);
+
+  const footer = [
+    docxPara("Un solde négatif (en rouge) correspond à un dépassement de consommation à régulariser. Un solde positif est en faveur du locataire.", { italic: true, size: 16, color: MUTED_HEX, spacingAfter: 60 }),
+    docxPara(`Document établi le ${fmtDate(todayISO())}`, { italic: true, size: 16, color: MUTED_HEX }),
+  ].join("");
+
+  return `${titleTable}${docxPara("", { spacingAfter: 120 })}${explanation}${chargesTable}${docxPara("", { spacingAfter: 60 })}${footer}`;
+}
+
+const DOCX_CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>`;
+
+const DOCX_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>`;
+
+const DOCX_DOCUMENT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
+
+const DOCX_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:sz w:val="20"/><w:lang w:val="fr-BE"/></w:rPr></w:rPrDefault>
+  </w:docDefaults>
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal">
+    <w:name w:val="Normal"/><w:qFormat/>
+  </w:style>
+</w:styles>`;
+
+const DOCX_CORE = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>Décompte</dc:title>
+  <dc:creator>Charges &amp; Compteurs</dc:creator>
+</cp:coreProperties>`;
+
+const DOCX_APP = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+  <Application>Charges &amp; Compteurs</Application>
+</Properties>`;
+
+async function buildDocxBlob(buildingName, unitName, tenantName, period, lines, totals) {
+  const bodyXml = buildDecompteDocxXml(buildingName, unitName, tenantName, period, lines, totals);
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>${bodyXml}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body>
+</w:document>`;
+
+  const zip = new window.JSZip();
+  zip.file("[Content_Types].xml", DOCX_CONTENT_TYPES);
+  zip.folder("_rels").file(".rels", DOCX_RELS);
+  zip.folder("word").file("document.xml", documentXml);
+  zip.folder("word").file("styles.xml", DOCX_STYLES);
+  zip.folder("word/_rels").file("document.xml.rels", DOCX_DOCUMENT_RELS);
+  zip.folder("docProps").file("core.xml", DOCX_CORE);
+  zip.folder("docProps").file("app.xml", DOCX_APP);
+
+  return zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
 }
 
 
@@ -364,11 +531,15 @@ function decompteFilename(buildingName, unitName, period, ext) {
     .replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
-function buildDecompteBlob(html) {
-  // Real .docx via html-docx-js when loaded (standalone build); otherwise
-  // fall back to the legacy HTML-as-.doc trick (works in Word, not Quick Look).
-  if (typeof window !== "undefined" && window.htmlDocx && window.htmlDocx.asBlob) {
-    return { blob: window.htmlDocx.asBlob(html), ext: "docx", mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
+async function buildDecompteBlob(buildingName, unitName, tenantName, period, lines, totals, html) {
+  // Real .docx via our hand-rolled OOXML builder (standalone build, JSZip loaded).
+  if (typeof window !== "undefined" && window.JSZip && typeof buildDocxBlob === "function") {
+    try {
+      const blob = await buildDocxBlob(buildingName, unitName, tenantName, period, lines, totals);
+      return { blob, ext: "docx", mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
+    } catch (e) {
+      // fall through to legacy HTML-as-.doc
+    }
   }
   return { blob: new Blob(["\ufeff", html], { type: "application/msword" }), ext: "doc", mime: "application/msword" };
 }
@@ -377,7 +548,7 @@ function buildDecompteBlob(html) {
 // lets the person save the file to Files, AirDrop it, or open it in Word).
 async function shareDecompteDoc(buildingName, unitName, tenantName, period, lines, totals) {
   const html = buildDecompteHtml(buildingName, unitName, tenantName, period, lines, totals);
-  const { blob, ext, mime } = buildDecompteBlob(html);
+  const { blob, ext, mime } = await buildDecompteBlob(buildingName, unitName, tenantName, period, lines, totals, html);
   const filename = decompteFilename(buildingName, unitName, period, ext);
   const file = new File([blob], filename, { type: mime });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -392,9 +563,9 @@ async function shareDecompteDoc(buildingName, unitName, tenantName, period, line
 }
 
 // Fallback: classic blob download (works in desktop browsers; unreliable in iOS standalone apps).
-function downloadDecompteDoc(buildingName, unitName, tenantName, period, lines, totals) {
+async function downloadDecompteDoc(buildingName, unitName, tenantName, period, lines, totals) {
   const html = buildDecompteHtml(buildingName, unitName, tenantName, period, lines, totals);
-  const { blob, ext } = buildDecompteBlob(html);
+  const { blob, ext } = await buildDecompteBlob(buildingName, unitName, tenantName, period, lines, totals, html);
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
