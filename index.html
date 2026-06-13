@@ -750,7 +750,7 @@ function App() {
         </div>
       )}
       <div className="content">
-        {tab === "dashboard" && <Dashboard data={data} onGo={(b, t) => { setBuilding(b); setTab(t); }} />}
+        {tab === "dashboard" && <Dashboard data={data} setData={setData} onGo={(b, t) => { setBuilding(b); setTab(t); }} />}
         {tab === "buildings" && <BuildingsView data={data} setData={setData} building={building} />}
         {tab === "meters" && <MetersView data={data} setData={setData} building={building} />}
         {tab === "decomptes" && <DecomptesView data={data} setData={setData} building={building} />}
@@ -803,9 +803,99 @@ function BottomNav({ tab, setTab }) {
 /* ============================================================
    DASHBOARD
    ============================================================ */
-function Dashboard({ data, onGo }) {
+/* ============================================================
+   BACKUP / SYNC (export & import full dataset as JSON, e.g. via OneDrive)
+   ============================================================ */
+function BackupBar({ data, setData }) {
+  const [msg, setMsg] = useState(null); // { type: "ok"|"err", text }
+  const [busy, setBusy] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const flash = (type, text) => {
+    setMsg({ type, text });
+    setTimeout(() => setMsg(null), 4000);
+  };
+
+  const exportData = async () => {
+    setBusy(true);
+    try {
+      const json = JSON.stringify(data, null, 2);
+      const blob = new Blob([json], { type: "application/json" });
+      const filename = "charges-data.json";
+      const file = new File([blob], filename, { type: "application/json" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file] });
+          flash("ok", "✓ Sauvegarde exportée");
+        } catch (e) {
+          // user cancelled the share sheet — not an error
+        }
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        flash("ok", "✓ Sauvegarde téléchargée");
+      }
+    } catch (e) {
+      flash("err", "Erreur lors de l'export : " + e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const importData = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setBusy(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        if (!parsed.buildings || !parsed.meters) throw new Error("Format de fichier inattendu");
+        setData(parsed);
+        flash("ok", "✓ Données importées");
+      } catch (err) {
+        flash("err", "Fichier invalide : " + err.message);
+      } finally {
+        setBusy(false);
+        e.target.value = "";
+      }
+    };
+    reader.onerror = () => { flash("err", "Impossible de lire le fichier"); setBusy(false); };
+    reader.readAsText(f);
+  };
+
+  return (
+    <div className="card">
+      <div style={{ fontWeight: 700, marginBottom: 8 }}>Sauvegarde & synchronisation</div>
+      <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>
+        Exportez un fichier vers OneDrive (ou ailleurs) pour le partager avec une autre personne ;
+        importez-le sur l'autre appareil pour récupérer ses dernières données.
+      </div>
+      <div className="row" style={{ flexWrap: "wrap" }}>
+        <button className="btn btn-primary" onClick={exportData} disabled={busy}>
+          <Download size={15} /> Sauvegarder
+        </button>
+        <button className="btn btn-ghost" onClick={() => fileInputRef.current?.click()} disabled={busy}>
+          <Save size={15} /> Importer
+        </button>
+        <input ref={fileInputRef} type="file" accept="application/json,.json" style={{ display: "none" }} onChange={importData} />
+      </div>
+      {msg && (
+        <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: msg.type === "ok" ? INK : RED }}>
+          {msg.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Dashboard({ data, setData, onGo }) {
   return (
     <div>
+      <BackupBar data={data} setData={setData} />
       {data.buildings.map(b => {
         const totalProv = b.units.reduce((s, u) => s + (u.provisionMonthly || 0) * 12, 0);
         const nMeters = data.meters.filter(m => m.building === b.id).length;
