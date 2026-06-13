@@ -12,6 +12,7 @@
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/html-docx-js@0.3.1/dist/html-docx.js"></script>
 <style>
   html, body { margin:0; padding:0; }
   #root { min-height: 100vh; }
@@ -357,18 +358,28 @@ function buildDecompteHtml(buildingName, unitName, tenantName, period, lines, to
   </body></html>`;
 }
 
-function decompteFilename(buildingName, unitName, period) {
-  return `Decompte_${buildingName}_${unitName}_${period.replace(/[\\/ ]/g, "-")}.doc`
+function decompteFilename(buildingName, unitName, period, ext) {
+  return `Decompte_${buildingName}_${unitName}_${period.replace(/[\\/ ]/g, "-")}.${ext}`
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+function buildDecompteBlob(html) {
+  // Real .docx via html-docx-js when loaded (standalone build); otherwise
+  // fall back to the legacy HTML-as-.doc trick (works in Word, not Quick Look).
+  if (typeof window !== "undefined" && window.htmlDocx && window.htmlDocx.asBlob) {
+    return { blob: window.htmlDocx.asBlob(html), ext: "docx", mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
+  }
+  return { blob: new Blob(["\ufeff", html], { type: "application/msword" }), ext: "doc", mime: "application/msword" };
 }
 
 // Primary: native share sheet (works in Safari + standalone PWA on iOS/iPadOS,
 // lets the person save the file to Files, AirDrop it, or open it in Word).
 async function shareDecompteDoc(buildingName, unitName, tenantName, period, lines, totals) {
   const html = buildDecompteHtml(buildingName, unitName, tenantName, period, lines, totals);
-  const filename = decompteFilename(buildingName, unitName, period);
-  const file = new File(["\ufeff" + html], filename, { type: "application/msword" });
+  const { blob, ext, mime } = buildDecompteBlob(html);
+  const filename = decompteFilename(buildingName, unitName, period, ext);
+  const file = new File([blob], filename, { type: mime });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title: filename });
@@ -383,11 +394,11 @@ async function shareDecompteDoc(buildingName, unitName, tenantName, period, line
 // Fallback: classic blob download (works in desktop browsers; unreliable in iOS standalone apps).
 function downloadDecompteDoc(buildingName, unitName, tenantName, period, lines, totals) {
   const html = buildDecompteHtml(buildingName, unitName, tenantName, period, lines, totals);
-  const blob = new Blob(["\ufeff", html], { type: "application/msword" });
+  const { blob, ext } = buildDecompteBlob(html);
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = decompteFilename(buildingName, unitName, period);
+  a.download = decompteFilename(buildingName, unitName, period, ext);
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -423,14 +434,14 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
         <button className="btn btn-primary" onClick={() => window.print()}><FileText size={15} /> Imprimer / Enregistrer en PDF</button>
         {canShareFiles && (
           <button className="btn btn-accent" onClick={handleShare}>
-            <Download size={15} /> {shareState === "sharing" ? "…" : "Partager le .doc"}
+            <Download size={15} /> {shareState === "sharing" ? "…" : "Partager le décompte (.docx)"}
           </button>
         )}
       </div>
       {shareState === "unsupported" && (
         <div className="no-print" style={{ fontSize: 12, color: MUTED, marginBottom: 10, padding: 8, background: PAPER, borderRadius: 8 }}>
           Le partage direct n'est pas disponible sur cet appareil/navigateur — utilisez "Imprimer / Enregistrer en PDF" ci-dessus,
-          ou <button className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }} onClick={onDownloadDoc}>essayez le téléchargement .doc</button>.
+          ou <button className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }} onClick={onDownloadDoc}>essayez le téléchargement</button>.
         </div>
       )}
 
