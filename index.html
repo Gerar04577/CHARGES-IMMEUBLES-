@@ -553,7 +553,7 @@ async function shareDecompteDoc(buildingName, unitName, tenantName, period, line
   const file = new File([blob], filename, { type: mime });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
-      await navigator.share({ files: [file], title: filename });
+      await navigator.share({ files: [file] });
       return true;
     } catch (e) {
       return false; // user cancelled, or share failed
