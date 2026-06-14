@@ -1600,6 +1600,14 @@ function DecomptesView({ data, setData, building }) {
   const [unitId, setUnitId] = useState(b.units[0]?.id);
   const unit = b.units.find(x => x.id === unitId);
 
+  // All hooks must run unconditionally on every render (React rule), so they
+  // are declared here, before any early return for special unit types
+  // (e.g. RDC Commercial / privateMeterOnly).
+  const [mazoutCost, setMazoutCost] = useState(0);
+  const [istaCost, setIstaCost] = useState(0);
+  const [provisionOverride, setProvisionOverride] = useState(null);
+  const [preview, setPreview] = useState(null);
+
   useEffect(() => {
     if (!b.units.find(x => x.id === unitId)) setUnitId(b.units[0]?.id);
   }, [building]);
@@ -1678,11 +1686,8 @@ function DecomptesView({ data, setData, building }) {
     return d.toISOString().slice(0, 10);
   })();
 
-  const [mazoutCost, setMazoutCost] = useState(0);
-  const [istaCost, setIstaCost] = useState(0);
   const months = days / 30.44; // continuous, for accurate partial-period provisions
   const monthsDisplay = Math.round(months * 10) / 10;
-  const [provisionOverride, setProvisionOverride] = useState(null);
   const provision = provisionOverride !== null ? provisionOverride : Math.round((unit.provisionMonthly || 0) * months * 100) / 100;
 
   // Cleaning fee: 10 EUR per whole month (a month started counts in full,
@@ -1727,7 +1732,6 @@ function DecomptesView({ data, setData, building }) {
   };
 
   const periodLabel = `${fmtDate(periodFrom)} - ${fmtDate(periodTo)}`;
-  const [preview, setPreview] = useState(null);
 
   const openCurrentPreview = () => {
     setPreview({
