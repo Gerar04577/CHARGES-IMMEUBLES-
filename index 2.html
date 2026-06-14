@@ -1559,20 +1559,14 @@ function MeterDetail({ data, setData, meter, onBack }) {
 
         <div className="scrollx" style={{ marginTop: 10 }}>
           <table className="tbl">
-            <thead><tr><th>Date</th><th>Index</th><th>Tarif</th><th>Conso.</th><th>Coût</th><th>Jours</th><th></th></tr></thead>
+            <thead><tr><th></th><th>Date</th><th>Index</th><th>Tarif</th><th>Conso.</th><th>Coût</th><th>Jours</th></tr></thead>
             <tbody>
               {meter.readings.slice().reverse().map((r, i) => {
                 const realIndex = meter.readings.length - 1 - i;
                 return (
                   <tr key={i}>
-                    <td>{fmtDate(r[0])}</td>
-                    <td>{fmtNum(r[1], 1)}</td>
-                    <td>{r[2] ? fmtNum(r[2], 3) : "—"}</td>
-                    <td>{fmtNum(r[3], 1)}</td>
-                    <td>{fmtEUR(r[4])}</td>
-                    <td>{r[5]}</td>
-                    <td>
-                      <button className="btn btn-ghost" style={{ padding: "4px 6px" }}
+                    <td style={{ textAlign: "left", padding: "6px 2px" }}>
+                      <button className="btn btn-ghost" style={{ padding: "4px 6px", color: RED }}
                         onClick={() => {
                           if (window.confirm(`Supprimer le relevé du ${fmtDate(r[0])} (index ${fmtNum(r[1], 1)}) ?`)) {
                             deleteReading(realIndex);
@@ -1581,6 +1575,12 @@ function MeterDetail({ data, setData, meter, onBack }) {
                         <X size={13} />
                       </button>
                     </td>
+                    <td>{fmtDate(r[0])}</td>
+                    <td>{fmtNum(r[1], 1)}</td>
+                    <td>{r[2] ? fmtNum(r[2], 3) : "—"}</td>
+                    <td>{fmtNum(r[3], 1)}</td>
+                    <td>{fmtEUR(r[4])}</td>
+                    <td>{r[5]}</td>
                   </tr>
                 );
               })}
