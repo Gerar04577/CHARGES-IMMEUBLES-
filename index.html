@@ -432,7 +432,7 @@ const TYPE_LABEL = { elec: "Électricité", eau: "Eau", gaz: "Gaz / Mazout" };
 const TYPE_COLOR = { elec: ACCENT, eau: "#3E7CB1", gaz: RED };
 
 function deriveTariffs(meters, building) {
-  const t = { eau: 6.5, elecJour: 0.6, elecNuit: 0.6, gaz: 0.6 };
+  const t = { eau: 6.5, elecJour: 0.6, elecNuit: 0.6, gaz: 0.6, studentEau: 6.5, studentElec: 0.6 };
   meters.filter(m => m.building === building).forEach(m => {
     const last = m.readings[m.readings.length - 1];
     if (!last) return;
@@ -442,6 +442,8 @@ function deriveTariffs(meters, building) {
     if (m.type === "elec" && m.subtype === "nuit" && rate) t.elecNuit = rate;
     if (m.type === "gaz" && rate) t.gaz = rate;
   });
+  t.studentEau = t.eau;
+  t.studentElec = t.elecJour;
   return t;
 }
 
@@ -945,6 +947,7 @@ function Dashboard({ data, setData, onGo }) {
 function BuildingsView({ data, setData, building }) {
   const b = data.buildings.find(x => x.id === building);
   const [editingTariffs, setEditingTariffs] = useState(true);
+  const [editingStudentTariffs, setEditingStudentTariffs] = useState(true);
   const tariffs = data.tariffs?.[building] || deriveTariffs(data.meters, building);
 
   const updateUnit = (unitId, patch) => {
@@ -985,30 +988,60 @@ function BuildingsView({ data, setData, building }) {
     <div>
       <div className="card">
         <div className="between" onClick={() => setEditingTariffs(v => !v)} style={{ cursor: "pointer" }}>
-          <div style={{ fontWeight: 700 }}>Tarifs — {b.name}</div>
+          <div style={{ fontWeight: 700 }}>Tarifs — Propriétaire ({b.name})</div>
           {editingTariffs ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
         </div>
         {editingTariffs && (
-          <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div>
-              <span className="label">Eau (€/m³)</span>
-              <input type="number" step="0.01" defaultValue={tariffs.eau} onBlur={e => updateTariff("eau", e.target.value)} />
+          <>
+            <div style={{ fontSize: 12, color: MUTED, margin: "8px 0" }}>
+              Tarifs réels payés par le propriétaire (factures), utilisés pour le Bilan et les ajustements des compteurs généraux.
             </div>
-            <div>
-              <span className="label">Élec jour (€/kWh)</span>
-              <input type="number" step="0.01" defaultValue={tariffs.elecJour} onBlur={e => updateTariff("elecJour", e.target.value)} />
-            </div>
-            <div>
-              <span className="label">Élec nuit (€/kWh)</span>
-              <input type="number" step="0.01" defaultValue={tariffs.elecNuit} onBlur={e => updateTariff("elecNuit", e.target.value)} />
-            </div>
-            {building === "ptg" && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>
-                <span className="label">Gaz (€/m³)</span>
-                <input type="number" step="0.01" defaultValue={tariffs.gaz} onBlur={e => updateTariff("gaz", e.target.value)} />
+                <span className="label">Eau (€/m³)</span>
+                <input type="number" step="0.01" defaultValue={tariffs.eau} onBlur={e => updateTariff("eau", e.target.value)} />
               </div>
-            )}
-          </div>
+              <div>
+                <span className="label">Élec jour (€/kWh)</span>
+                <input type="number" step="0.01" defaultValue={tariffs.elecJour} onBlur={e => updateTariff("elecJour", e.target.value)} />
+              </div>
+              <div>
+                <span className="label">Élec nuit (€/kWh)</span>
+                <input type="number" step="0.01" defaultValue={tariffs.elecNuit} onBlur={e => updateTariff("elecNuit", e.target.value)} />
+              </div>
+              {building === "ptg" && (
+                <div>
+                  <span className="label">Gaz (€/m³)</span>
+                  <input type="number" step="0.01" defaultValue={tariffs.gaz} onBlur={e => updateTariff("gaz", e.target.value)} />
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="between" onClick={() => setEditingStudentTariffs(v => !v)} style={{ cursor: "pointer" }}>
+          <div style={{ fontWeight: 700 }}>Tarifs — Étudiants ({b.name})</div>
+          {editingStudentTariffs ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+        </div>
+        {editingStudentTariffs && (
+          <>
+            <div style={{ fontSize: 12, color: MUTED, margin: "8px 0" }}>
+              Tarifs facturés aux locataires dans les décomptes — un seul tarif électricité (pas de
+              distinction jour/nuit). Le gaz n'est pas facturé ici (couvert par ISTA).
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <span className="label">Eau (€/m³)</span>
+                <input type="number" step="0.01" defaultValue={tariffs.studentEau} onBlur={e => updateTariff("studentEau", e.target.value)} />
+              </div>
+              <div>
+                <span className="label">Électricité (€/kWh)</span>
+                <input type="number" step="0.01" defaultValue={tariffs.studentElec} onBlur={e => updateTariff("studentElec", e.target.value)} />
+              </div>
+            </div>
+          </>
         )}
       </div>
 
@@ -1645,9 +1678,13 @@ function DecomptesView({ data, setData, building }) {
   const eauInterval = eauMeters.length ? eauMeters.map(m => lastInterval(m.readings)).filter(Boolean) : [];
 
   const elecConsoRaw = elecInterval.reduce((s, i) => s + i.conso, 0);
-  const elecCostRaw = elecInterval.reduce((s, i) => s + i.cost, 0);
   const eauConsoRaw = eauInterval.reduce((s, i) => s + i.conso, 0);
-  const eauCostRaw = eauInterval.reduce((s, i) => s + i.cost, 0);
+
+  // Décomptes are billed at the "Tarifs — Étudiants" rates, not the
+  // historical fixed cost stored with each meter reading.
+  const studentTariffs = data.tariffs?.[building] || deriveTariffs(data.meters, building);
+  const elecCostRaw = elecConsoRaw * (studentTariffs.studentElec || 0);
+  const eauCostRaw = eauConsoRaw * (studentTariffs.studentEau || 0);
 
   const elecAdj = getAdjustment(data, building, "elec");
   const eauAdj = getAdjustment(data, building, "eau");
@@ -1670,7 +1707,7 @@ function DecomptesView({ data, setData, building }) {
       sharedWaterInterval = lastInterval(sharedMeter.readings);
       if (sharedWaterInterval) {
         sharedWaterConso = sharedWaterInterval.conso / unit.sharedWaterDivisor;
-        sharedWaterCost = sharedWaterInterval.cost / unit.sharedWaterDivisor;
+        sharedWaterCost = sharedWaterConso * (studentTariffs.studentEau || 0);
       }
     }
   }
