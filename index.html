@@ -1845,7 +1845,7 @@ function DecomptesView({ data, setData, building }) {
                 <tr>
                   <td>{unit.hasIsta ? "Chauffage / Eau chaude" : "Mazout / Chauffage (quote-part)"}</td>
                   <td>{unit.hasIsta ? "ISTA" : "—"}</td>
-                  <td><input type="number" step="0.01" value={unit.hasIsta ? istaCost : mazoutCost} onChange={e => (unit.hasIsta ? setIstaCost : setMazoutCost)(parseFloat(e.target.value) || 0)} style={{ width: 90, textAlign: "right" }} /></td>
+                  <td><input type="number" step="0.01" value={(unit.hasIsta ? istaCost : mazoutCost) || ""} placeholder="0" onChange={e => (unit.hasIsta ? setIstaCost : setMazoutCost)(parseFloat(e.target.value) || 0)} style={{ width: 90, textAlign: "right" }} /></td>
                 </tr>
               )}
               <tr><td>Électricité{elecAdj.mode !== "none" ? " *" : ""}{unit.elecOverrideZero ? " (n/a)" : ""}</td><td>{fmtNum(elecConso, 1)} kWh</td><td>{fmtEUR(elecCost)}</td></tr>
@@ -1889,7 +1889,7 @@ function DecomptesView({ data, setData, building }) {
 
         <div style={{ marginTop: 12 }}>
           <span className="label">Provision de charges (≈ {fmtNum(monthsDisplay, 1)} mois × {fmtEUR(unit.provisionMonthly)})</span>
-          <input type="number" step="0.01" value={provision} onChange={e => setProvisionOverride(parseFloat(e.target.value) || 0)} />
+          <input type="number" step="0.01" value={provision || ""} placeholder="0" onChange={e => setProvisionOverride(parseFloat(e.target.value) || 0)} />
         </div>
 
         <div className="card" style={{ marginTop: 12, background: PAPER, border: "none" }}>
