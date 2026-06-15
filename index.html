@@ -1500,8 +1500,21 @@ function MeterDetail({ data, setData, meter, onBack }) {
   const days = last ? daysBetween(last[0], newDate) : null;
   const cost = conso !== null && newRate !== "" ? conso * parseFloat(newRate) : null;
 
+  // Previous period (the interval ending at `last`), for the ±20% comparison.
+  const prevPeriod = meter.readings.length >= 2 ? meter.readings[meter.readings.length - 2] : null;
+  const prevConsoPerDay = prevPeriod && last && last[5] ? last[3] / last[5] : null;
+  const newConsoPerDay = conso !== null && days ? conso / days : null;
+  let consoAlertPct = null;
+  if (prevConsoPerDay !== null && prevConsoPerDay > 0 && newConsoPerDay !== null) {
+    consoAlertPct = ((newConsoPerDay - prevConsoPerDay) / prevConsoPerDay) * 100;
+  }
+  const consoAlert = consoAlertPct !== null && Math.abs(consoAlertPct) >= 20 ? consoAlertPct : null;
+
+  const [lastAlert, setLastAlert] = useState(null);
+
   const addReading = () => {
     if (newIndex === "" || !newDate) return;
+    const alertPct = consoAlert; // capture before state resets
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
       const m = next.meters.find(x => x.id === meter.id);
@@ -1510,6 +1523,7 @@ function MeterDetail({ data, setData, meter, onBack }) {
     });
     setShowForm(false);
     setNewIndex("");
+    setLastAlert(alertPct !== null ? { pct: alertPct, date: newDate } : null);
   };
 
   const deleteReading = (index) => {
@@ -1586,7 +1600,19 @@ function MeterDetail({ data, setData, meter, onBack }) {
             <div style={{ fontSize: 13, color: MUTED, marginBottom: 8 }}>
               Consommation : <b>{conso !== null ? fmtNum(conso, 1) : "—"}</b> · Jours : <b>{days ?? "—"}</b> · Coût : <b>{cost !== null ? fmtEUR(cost) : "—"}</b>
             </div>
+            {consoAlert !== null && (
+              <div style={{ fontSize: 13, fontWeight: 700, color: RED, marginBottom: 8, padding: 8, background: "#fdecec", borderRadius: 8 }}>
+                ⚠️ Consommation {consoAlert > 0 ? "en hausse" : "en baisse"} de {fmtNum(Math.abs(consoAlert), 0)}% par rapport à la période précédente (comparaison ramenée au nombre de jours).
+              </div>
+            )}
             <button className="btn btn-primary" onClick={addReading}><Save size={14} /> Enregistrer le relevé</button>
+          </div>
+        )}
+
+        {lastAlert && (
+          <div style={{ fontSize: 13, fontWeight: 700, color: RED, marginTop: 10, padding: 10, background: "#fdecec", borderRadius: 8 }}>
+            ⚠️ Relevé du {fmtDate(lastAlert.date)} enregistré — consommation {lastAlert.pct > 0 ? "en hausse" : "en baisse"} de {fmtNum(Math.abs(lastAlert.pct), 0)}% par rapport à la période précédente.
+            <button className="btn btn-ghost" style={{ marginLeft: 8, padding: "2px 8px", fontSize: 12 }} onClick={() => setLastAlert(null)}>OK</button>
           </div>
         )}
 
