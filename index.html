@@ -593,7 +593,7 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
   };
 
   return (
-    <div className="app-root" style={{ position: "fixed", inset: 0, zIndex: 100, overflow: "auto", padding: 16, background: "#fff" }}>
+    <div className="app-root" style={{ position: "fixed", inset: 0, zIndex: 100, overflow: "auto", padding: 16, paddingTop: "calc(16px + env(safe-area-inset-top))", background: "#fff" }}>
       <style>{`
         @media print {
           .no-print { display: none !important; }
@@ -1289,7 +1289,7 @@ function ReportView({ data, building, type, onClose }) {
   };
 
   return (
-    <div className="app-root" style={{ position: "fixed", inset: 0, zIndex: 100, overflow: "auto", padding: 16 }}>
+    <div className="app-root" style={{ position: "fixed", inset: 0, zIndex: 100, overflow: "auto", padding: 16, paddingTop: "calc(16px + env(safe-area-inset-top))" }}>
       <style>{`
         @media print {
           .no-print { display: none !important; }
@@ -1607,6 +1607,8 @@ function DecomptesView({ data, setData, building }) {
   const [istaCost, setIstaCost] = useState(0);
   const [provisionOverride, setProvisionOverride] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [periodFromOverride, setPeriodFromOverride] = useState(null);
+  const [periodToOverride, setPeriodToOverride] = useState(null);
 
   useEffect(() => {
     if (!b.units.find(x => x.id === unitId)) setUnitId(b.units[0]?.id);
@@ -1675,16 +1677,16 @@ function DecomptesView({ data, setData, building }) {
   eauConso += sharedWaterConso;
   eauCost += sharedWaterCost;
 
-  const days = Math.max(
-    ...elecInterval.map(i => i.days), ...eauInterval.map(i => i.days), 0
-  ) || 365;
-
-  const periodTo = (elecInterval[0]?.toDate) || (eauInterval[0]?.toDate) || todayISO();
-  const periodFrom = (elecInterval[0]?.fromDate) || (eauInterval[0]?.fromDate) || (() => {
-    const d = new Date(periodTo);
+  const periodToDefault = (elecInterval[0]?.toDate) || (eauInterval[0]?.toDate) || todayISO();
+  const periodFromDefault = (elecInterval[0]?.fromDate) || (eauInterval[0]?.fromDate) || (() => {
+    const d = new Date(periodToDefault);
     d.setDate(d.getDate() - 365);
     return d.toISOString().slice(0, 10);
   })();
+  const periodFrom = periodFromOverride || periodFromDefault;
+  const periodTo = periodToOverride || periodToDefault;
+
+  const days = Math.max(daysBetween(periodFrom, periodTo), 1);
 
   const months = days / 30.44; // continuous, for accurate partial-period provisions
   const monthsDisplay = Math.round(months * 10) / 10;
@@ -1770,7 +1772,7 @@ function DecomptesView({ data, setData, building }) {
     <div>
       <div className="card">
         <span className="label">Logement</span>
-        <select value={unitId} onChange={e => { setUnitId(e.target.value); setProvisionOverride(null); setMazoutCost(0); setIstaCost(0); }}>
+        <select value={unitId} onChange={e => { setUnitId(e.target.value); setProvisionOverride(null); setMazoutCost(0); setIstaCost(0); setPeriodFromOverride(null); setPeriodToOverride(null); }}>
           {b.units.map(u => <option key={u.id} value={u.id}>{u.name} — {u.tenant || "Vacant"}</option>)}
         </select>
       </div>
@@ -1778,6 +1780,25 @@ function DecomptesView({ data, setData, building }) {
       <div className="card">
         <div style={{ fontWeight: 700, marginBottom: 4 }}>Période en cours</div>
         <div style={{ fontSize: 13, color: MUTED, marginBottom: 10 }}>{periodLabel} ({days} jours) — {unit.tenant || "Vacant"}</div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+          <div>
+            <span className="label">Début de période</span>
+            <input type="date" value={periodFrom} onChange={e => setPeriodFromOverride(e.target.value || null)} />
+          </div>
+          <div>
+            <span className="label">Fin de période</span>
+            <input type="date" value={periodTo} onChange={e => setPeriodToOverride(e.target.value || null)} />
+          </div>
+        </div>
+        {(periodFromOverride || periodToOverride) && (
+          <div style={{ fontSize: 12, color: ACCENT, marginBottom: 10 }}>
+            Période modifiée manuellement — {fmtNum(monthsDisplay, 1)} mois (provision et nettoyage recalculés).{" "}
+            <button className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => { setPeriodFromOverride(null); setPeriodToOverride(null); }}>
+              Réinitialiser
+            </button>
+          </div>
+        )}
 
         <div className="scrollx">
           <table className="tbl">
