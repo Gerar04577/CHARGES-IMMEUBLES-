@@ -708,6 +708,13 @@ function App() {
   useEffect(() => {
     (async () => {
       try {
+        // ?reset in URL clears stored data and reloads from seed (emergency recovery)
+        if (window.location.search.includes("reset")) {
+          await window.storage.delete("charges-data").catch(() => {});
+          setData(JSON.parse(JSON.stringify(SEED)));
+          setLoaded(true);
+          return;
+        }
         const res = await window.storage.get("charges-data");
         if (res && res.value) {
           setData(JSON.parse(res.value));
