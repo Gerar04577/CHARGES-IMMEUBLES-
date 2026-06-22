@@ -879,6 +879,27 @@ function BackupBar({ data, setData }) {
     }
   };
 
+  const importOneDrive = async () => {
+    setBusy(true);
+    try {
+      const response = await fetch("https://hook.eu1.make.com/kqurk32xbicep7issepd36nxh2db87ov", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "import" })
+      });
+      if (!response.ok) { flash("err", "Erreur Make.com : " + response.status); return; }
+      const text = await response.text();
+      const parsed = JSON.parse(text);
+      if (!parsed.buildings || !parsed.meters) throw new Error("Format de fichier inattendu");
+      setData(parsed);
+      flash("ok", "✓ Importation automatique OneDrive réussie");
+    } catch (e) {
+      flash("err", "Erreur d'importation : " + e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const importData = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -906,7 +927,8 @@ function BackupBar({ data, setData }) {
       <div style={{ fontWeight: 700, marginBottom: 8 }}>Sauvegarde & synchronisation</div>
       <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>
         <b>Sauvegarde manuelle</b> : exporte le fichier via la feuille de partage iOS (OneDrive, etc.).<br/>
-        <b>Sauvegarde automatique</b> : envoie directement vers OneDrive via Make.com en un clic.
+        <b>Sauvegarde automatique</b> : envoie directement vers OneDrive via Make.com en un clic.<br/>
+        <b>Importation automatique</b> : récupère directement depuis OneDrive via Make.com en un clic.
       </div>
       <div className="row" style={{ flexWrap: "wrap" }}>
         <button className="btn btn-primary" onClick={exportData} disabled={busy}>
@@ -914,6 +936,9 @@ function BackupBar({ data, setData }) {
         </button>
         <button className="btn btn-primary" onClick={syncOneDrive} disabled={busy} style={{ background: "linear-gradient(135deg,#4f6ef7,#7c3aed)", border: "none" }}>
           ☁️ Sauvegarde automatique OneDrive
+        </button>
+        <button className="btn btn-primary" onClick={importOneDrive} disabled={busy} style={{ background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none" }}>
+          ☁️ Importation automatique OneDrive
         </button>
         <button className="btn btn-ghost" onClick={() => fileInputRef.current?.click()} disabled={busy}>
           <Save size={15} /> Importer
