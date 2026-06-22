@@ -941,7 +941,7 @@ function BackupBar({ data, setData }) {
           ☁️ Importation automatique OneDrive
         </button>
         <button className="btn btn-ghost" onClick={() => fileInputRef.current?.click()} disabled={busy}>
-          <Save size={15} /> Importer
+          <Save size={15} /> Importation manuelle (fichier)
         </button>
         <input ref={fileInputRef} type="file" accept="application/json,.json" style={{ display: "none" }} onChange={importData} />
       </div>
