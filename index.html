@@ -889,7 +889,8 @@ function BackupBar({ data, setData }) {
       });
       if (!response.ok) { flash("err", "Erreur Make.com : " + response.status); return; }
       const text = await response.text();
-      const parsed = JSON.parse(text);
+      const decoded = decodeURIComponent(escape(atob(text)));
+      const parsed = JSON.parse(decoded);
       if (!parsed.buildings || !parsed.meters) throw new Error("Format de fichier inattendu");
       setData(parsed);
       flash("ok", "✓ Importation automatique OneDrive réussie");
