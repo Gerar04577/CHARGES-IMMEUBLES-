@@ -594,7 +594,7 @@ async function saveDecompteOneDrive(buildingName, unitName, tenantName, period, 
   const buildingClean = cleanPath(buildingName);
   const unitClean = cleanPath(unitName);
   const tenantClean = cleanPath(tenantName);
-  const folderPath = "SAUVEGARDE DECOMPTES/" + year + "/" + buildingClean + "/" + unitClean;
+  const folderPath = year + "/" + buildingClean + "/" + unitClean;
   const filename = "Decompte_" + buildingClean + "_" + unitClean + "_" + tenantClean + "_" + year + ".docx";
   const html = buildDecompteHtml(buildingName, unitName, tenantName, period, lines, totals);
   const { blob } = await buildDecompteBlob(buildingName, unitName, tenantName, period, lines, totals, html);
@@ -2064,4 +2064,72 @@ function DecomptesView({ data, setData, building }) {
                   if (window.confirm(`Supprimer l'archive du ${fmtDate(a.from)} → ${fmtDate(a.to)} (${a.tenant}) ?`)) {
                     setData(prev => {
                       const next = JSON.parse(JSON.stringify(prev));
-       
+                      next.archives[building][unitId].splice(realIndex, 1);
+                      return next;
+                    });
+                  }
+                }}><X size={14} /></button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   SEARCH VIEW
+   ============================================================ */
+function SearchView({ data, onGo }) {
+  const [q, setQ] = useState("");
+  const results = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    const out = [];
+    data.buildings.forEach(b => {
+      b.units.forEach(u => {
+        const names = [u.tenant, ...(u.history || []).map(h => h.tenant)].filter(Boolean);
+        const archives = (data.archives?.[b.id]?.[u.id]) || [];
+        archives.forEach(a => names.push(a.tenant));
+        const haystack = [b.name, u.name, ...names].join(" ").toLowerCase();
+        if (term === "" || haystack.includes(term)) {
+          out.push({ building: b, unit: u, names: [...new Set(names)] });
+        }
+      });
+    });
+    return out;
+  }, [q, data]);
+
+  return (
+    <div>
+      <div className="card">
+        <input placeholder="Rechercher un immeuble, un logement ou un locataire…" value={q} onChange={e => setQ(e.target.value)} />
+      </div>
+      {results.map(r => (
+        <div className="card" key={r.building.id + r.unit.id}>
+          <div className="between">
+            <div>
+              <div style={{ fontWeight: 700 }}>{r.unit.name} <span style={{ color: MUTED, fontWeight: 400 }}>· {r.building.name}</span></div>
+              <div style={{ fontSize: 13, color: MUTED }}>
+                {r.names.length ? r.names.join(", ") : "Aucun locataire enregistré"}
+              </div>
+            </div>
+          </div>
+          <div className="row" style={{ marginTop: 8 }}>
+            <button className="btn btn-ghost" onClick={() => onGo(r.building.id, "buildings")}>Logement</button>
+            <button className="btn btn-ghost" onClick={() => onGo(r.building.id, "meters")}>Compteurs</button>
+            <button className="btn btn-ghost" onClick={() => onGo(r.building.id, "decomptes")}>Décomptes</button>
+          </div>
+        </div>
+      ))}
+      {results.length === 0 && <div style={{ fontSize: 13, color: MUTED, textAlign: "center", marginTop: 30 }}>Aucun résultat.</div>}
+    </div>
+  );
+}
+
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+</script>
+</body>
+</html>
