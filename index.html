@@ -578,10 +578,45 @@ async function downloadDecompteDoc(buildingName, unitName, tenantName, period, l
   URL.revokeObjectURL(url);
 }
 
+
+// Sauvegarde automatique OneDrive via Make.com
+function cleanPath(str) {
+  return (str || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "_")
+    .replace(/[^A-Za-z0-9_-]/g, "");
+}
+
+async function saveDecompteOneDrive(buildingName, unitName, tenantName, period, lines, totals) {
+  const parts = period.split(" - ");
+  const dateFin = parts[parts.length - 1].trim();
+  const year = dateFin.slice(-4);
+  const buildingClean = cleanPath(buildingName);
+  const unitClean = cleanPath(unitName);
+  const tenantClean = cleanPath(tenantName);
+  const folderPath = "SAUVEGARDE DECOMPTES/" + year + "/" + buildingClean + "/" + unitClean;
+  const filename = "Decompte_" + buildingClean + "_" + unitClean + "_" + tenantClean + "_" + year + ".docx";
+  const html = buildDecompteHtml(buildingName, unitName, tenantName, period, lines, totals);
+  const { blob } = await buildDecompteBlob(buildingName, unitName, tenantName, period, lines, totals, html);
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+  const response = await fetch("https://hook.eu1.make.com/pya67pi1a9tsccwgssa7pieib9wa5438", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "save_decompte_auto", folderPath, filename, data: base64 })
+  });
+  if (!response.ok) throw new Error("Erreur Make.com : " + response.status);
+  return { folderPath, filename };
+}
+
 /* ============================================================
    DÉCOMPTE PREVIEW (printable, in-app)
    ============================================================ */
-function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onShareDoc, onDownloadDoc }) {
+function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onShareDoc, onDownloadDoc, onSaveDecompteOneDrive }) {
   const diffColor = totals.diff < 0 ? RED : TEXT;
   const diffText = (totals.diff < 0 ? "-" : "") + fmtEUR(Math.abs(totals.diff));
   const [shareState, setShareState] = useState("idle"); // idle | sharing | unsupported
@@ -592,6 +627,19 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
     setShareState("sharing");
     const ok = await onShareDoc();
     setShareState(ok ? "idle" : "unsupported");
+  };
+
+  const [saveOneDriveState, setSaveOneDriveState] = React.useState("idle"); // idle | saving | ok | err
+  const handleSaveOneDrive = async () => {
+    setSaveOneDriveState("saving");
+    try {
+      await onSaveDecompteOneDrive();
+      setSaveOneDriveState("ok");
+      setTimeout(() => setSaveOneDriveState("idle"), 3000);
+    } catch(e) {
+      setSaveOneDriveState("err");
+      setTimeout(() => setSaveOneDriveState("idle"), 4000);
+    }
   };
 
   return (
@@ -605,11 +653,10 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
       <div className="no-print row" style={{ marginBottom: 12, flexWrap: "wrap" }}>
         <button className="btn btn-ghost" onClick={onClose}><ArrowLeft size={15} /> Retour</button>
         <button className="btn btn-primary" onClick={() => window.print()}><FileText size={15} /> Imprimer / Enregistrer en PDF</button>
-        {canShareFiles && (
-          <button className="btn btn-accent" onClick={handleShare}>
-            <Download size={15} /> {shareState === "sharing" ? "…" : "Partager le décompte (.docx)"}
-          </button>
-        )}
+        <button className="btn btn-success" onClick={handleSaveOneDrive} disabled={saveOneDriveState === "saving"}
+          style={{ background: saveOneDriveState === "ok" ? "#16a34a" : saveOneDriveState === "err" ? "#dc2626" : "linear-gradient(135deg,#16a34a,#15803d)", color: "#fff", border: "none" }}>
+          {saveOneDriveState === "saving" ? "⏳ Sauvegarde…" : saveOneDriveState === "ok" ? "✓ Sauvegardé !" : saveOneDriveState === "err" ? "✗ Erreur" : "☁️ Sauvegarder le décompte (OneDrive)"}
+        </button>
         <button className="btn" onClick={() => window.open('https://gerar04577.github.io/ENVOI-DECOMPTES/charges-envoi.html', '_blank')} style={{ background: "linear-gradient(135deg,#4f6ef7,#7c3aed)", color: "#fff", border: "none" }}>
           📬 Envoyer
         </button>
@@ -1888,6 +1935,7 @@ function DecomptesView({ data, setData, building }) {
         onClose={() => setPreview(null)}
         onShareDoc={() => shareDecompteDoc(preview.b.name, preview.unit.name, preview.tenant, preview.period, preview.lines, preview.totals)}
         onDownloadDoc={() => downloadDecompteDoc(preview.b.name, preview.unit.name, preview.tenant, preview.period, preview.lines, preview.totals)}
+        onSaveDecompteOneDrive={() => saveDecompteOneDrive(preview.b.name, preview.unit.name, preview.tenant, preview.period, preview.lines, preview.totals)}
       />
     );
   }
@@ -2016,72 +2064,4 @@ function DecomptesView({ data, setData, building }) {
                   if (window.confirm(`Supprimer l'archive du ${fmtDate(a.from)} → ${fmtDate(a.to)} (${a.tenant}) ?`)) {
                     setData(prev => {
                       const next = JSON.parse(JSON.stringify(prev));
-                      next.archives[building][unitId].splice(realIndex, 1);
-                      return next;
-                    });
-                  }
-                }}><X size={14} /></button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
-   SEARCH VIEW
-   ============================================================ */
-function SearchView({ data, onGo }) {
-  const [q, setQ] = useState("");
-  const results = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    const out = [];
-    data.buildings.forEach(b => {
-      b.units.forEach(u => {
-        const names = [u.tenant, ...(u.history || []).map(h => h.tenant)].filter(Boolean);
-        const archives = (data.archives?.[b.id]?.[u.id]) || [];
-        archives.forEach(a => names.push(a.tenant));
-        const haystack = [b.name, u.name, ...names].join(" ").toLowerCase();
-        if (term === "" || haystack.includes(term)) {
-          out.push({ building: b, unit: u, names: [...new Set(names)] });
-        }
-      });
-    });
-    return out;
-  }, [q, data]);
-
-  return (
-    <div>
-      <div className="card">
-        <input placeholder="Rechercher un immeuble, un logement ou un locataire…" value={q} onChange={e => setQ(e.target.value)} />
-      </div>
-      {results.map(r => (
-        <div className="card" key={r.building.id + r.unit.id}>
-          <div className="between">
-            <div>
-              <div style={{ fontWeight: 700 }}>{r.unit.name} <span style={{ color: MUTED, fontWeight: 400 }}>· {r.building.name}</span></div>
-              <div style={{ fontSize: 13, color: MUTED }}>
-                {r.names.length ? r.names.join(", ") : "Aucun locataire enregistré"}
-              </div>
-            </div>
-          </div>
-          <div className="row" style={{ marginTop: 8 }}>
-            <button className="btn btn-ghost" onClick={() => onGo(r.building.id, "buildings")}>Logement</button>
-            <button className="btn btn-ghost" onClick={() => onGo(r.building.id, "meters")}>Compteurs</button>
-            <button className="btn btn-ghost" onClick={() => onGo(r.building.id, "decomptes")}>Décomptes</button>
-          </div>
-        </div>
-      ))}
-      {results.length === 0 && <div style={{ fontSize: 13, color: MUTED, textAlign: "center", marginTop: 30 }}>Aucun résultat.</div>}
-    </div>
-  );
-}
-
-
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
-
-</script>
-</body>
-</html>
+       
