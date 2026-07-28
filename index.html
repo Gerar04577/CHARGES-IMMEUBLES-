@@ -781,7 +781,16 @@ function App() {
   useEffect(() => {
     if (!loaded || !data) return;
     window.storage.set("charges-data", JSON.stringify(data)).catch(() => {});
+    markPendingSync();
   }, [data, loaded]);
+
+  const dataRef = React.useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    initBackgroundSyncTriggers(() => dataRef.current);
+  }, [loaded]);
 
   if (!data) {
     return (
@@ -862,6 +871,48 @@ function BottomNav({ tab, setTab }) {
 /* ============================================================
    DASHBOARD
    ============================================================ */
+/* Sauvegarde OneDrive automatique */
+const WEBHOOK_URL = "https://hook.eu1.make.com/pya67pi1a9tsccwgssa7pieib9wa5438";
+function markPendingSync() { try { localStorage.setItem("charges-pending-sync", "1"); } catch (e) {} try { window.dispatchEvent(new Event("charges-sync-status")); } catch (e) {} }
+function clearPendingSync() { try { localStorage.removeItem("charges-pending-sync"); localStorage.setItem("charges-last-sync", new Date().toISOString()); } catch (e) {} try { window.dispatchEvent(new Event("charges-sync-status")); } catch (e) {} }
+function hasPendingSync() { try { return localStorage.getItem("charges-pending-sync") === "1"; } catch (e) { return false; } }
+function getLastSync() { try { return localStorage.getItem("charges-last-sync"); } catch (e) { return null; } }
+function attemptBackgroundSync(getData, reason) {
+  if (!hasPendingSync() || !navigator.onLine) return;
+  try {
+    const data = getData();
+    if (!data) return;
+    const base64 = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
+    fetch(WEBHOOK_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "save", data: base64, reason }), keepalive: true })
+      .then(res => { if (res.ok) clearPendingSync(); }).catch(() => {});
+  } catch (e) {}
+}
+function initBackgroundSyncTriggers(getData) {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") attemptBackgroundSync(getData, "app-en-arriere-plan");
+  });
+  window.addEventListener("pagehide", () => attemptBackgroundSync(getData, "app-fermee"));
+  window.addEventListener("online", () => attemptBackgroundSync(getData, "retour-reseau"));
+}
+
+function SyncStatusBadge() {
+  const [status, setStatus] = React.useState(() => ({ pending: hasPendingSync(), lastSync: getLastSync() }));
+  React.useEffect(() => {
+    const update = () => setStatus({ pending: hasPendingSync(), lastSync: getLastSync() });
+    window.addEventListener("charges-sync-status", update);
+    return () => window.removeEventListener("charges-sync-status", update);
+  }, []);
+  if (status.pending) {
+    return <div style={{ fontSize: 12, fontWeight: 700, color: ACCENT, marginBottom: 10 }}>⏳ Modifications en attente de sauvegarde automatique</div>;
+  }
+  if (status.lastSync) {
+    const d = new Date(status.lastSync);
+    const timeStr = d.toLocaleString("fr-BE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    return <div style={{ fontSize: 12, fontWeight: 700, color: INK, marginBottom: 10 }}>☁️ Sauvegardé automatiquement le {timeStr}</div>;
+  }
+  return <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>☁️ Sauvegarde automatique pas encore effectuée</div>;
+}
+
 /* ============================================================
    BACKUP / SYNC (export & import full dataset as JSON, e.g. via OneDrive)
    ============================================================ */
@@ -973,6 +1024,7 @@ function BackupBar({ data, setData }) {
   return (
     <div className="card">
       <div style={{ fontWeight: 700, marginBottom: 8 }}>Sauvegarde & synchronisation</div>
+      <SyncStatusBadge />
       <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>
         <b>Sauvegarde manuelle</b> : exporte le fichier via la feuille de partage iOS (OneDrive, etc.).<br/>
         <b>Sauvegarde automatique</b> : envoie directement vers OneDrive via Make.com en un clic.<br/>
