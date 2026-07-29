@@ -893,6 +893,7 @@ function initBackgroundSyncTriggers(getData) {
   });
   window.addEventListener("pagehide", () => attemptBackgroundSync(getData, "app-fermee"));
   window.addEventListener("online", () => attemptBackgroundSync(getData, "retour-reseau"));
+  setInterval(() => attemptBackgroundSync(getData, "sauvegarde-periodique"), 5 * 60 * 1000);
 }
 
 function SyncStatusBadge() {
