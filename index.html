@@ -650,11 +650,14 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
         @media print {
           .no-print { display: none !important; }
           .app-root { padding: 0 !important; background: #fff !important; }
+          .scrollx { overflow-x: visible !important; }
+          table.tbl { table-layout: fixed !important; font-size: 11px !important; }
         }
       `}</style>
       <div className="no-print row" style={{ marginBottom: 12, flexWrap: "wrap" }}>
         <button className="btn btn-ghost" onClick={onClose}><ArrowLeft size={15} /> Retour</button>
         <button className="btn btn-primary" onClick={() => window.print()}><FileText size={15} /> Imprimer / Enregistrer en PDF</button>
+        <button className="btn btn-ghost" onClick={onDownloadDoc}><Download size={15} /> Télécharger le .docx</button>
         <button className="btn btn-success" onClick={handleSaveOneDrive} disabled={saveOneDriveState === "saving"}
           style={{ background: saveOneDriveState === "ok" ? "#16a34a" : saveOneDriveState === "err" ? "#dc2626" : "linear-gradient(135deg,#16a34a,#15803d)", color: "#fff", border: "none" }}>
           {saveOneDriveState === "saving" ? "⏳ Sauvegarde…" : saveOneDriveState === "ok" ? "✓ Sauvegardé !" : saveOneDriveState === "err" ? "✗ Erreur" : "☁️ Sauvegarder le décompte (OneDrive)"}
