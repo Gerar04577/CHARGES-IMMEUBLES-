@@ -164,12 +164,14 @@ function docxRow(cells) {
 }
 
 function docxTable(rows, opts = {}) {
-  const { widthPct = 5000 } = opts;
+  const { widthPct = 5000, nCols = 1 } = opts;
+  const colWidth = Math.floor(9000 / nCols);
+  const gridCols = Array.from({ length: nCols }, () => `<w:gridCol w:w="${colWidth}"/>`).join("");
   return `<w:tbl><w:tblPr><w:tblW w:w="${widthPct}" w:type="pct"/><w:tblBorders>
     <w:top w:val="single" w:sz="4" w:color="999999"/><w:left w:val="single" w:sz="4" w:color="999999"/>
     <w:bottom w:val="single" w:sz="4" w:color="999999"/><w:right w:val="single" w:sz="4" w:color="999999"/>
     <w:insideH w:val="single" w:sz="4" w:color="999999"/><w:insideV w:val="single" w:sz="4" w:color="999999"/>
-  </w:tblBorders><w:tblLayout w:type="autofit"/></w:tblPr><w:tblGrid/>${rows.join("")}</w:tbl>`;
+  </w:tblBorders><w:tblLayout w:type="autofit"/></w:tblPr><w:tblGrid>${gridCols}</w:tblGrid>${rows.join("")}</w:tbl>`;
 }
 
 // Builds the Word document body XML for a décompte.
@@ -184,7 +186,7 @@ function buildDecompteDocxXml(buildingName, unitName, tenantName, period, lines,
       docxCell(unitName.toUpperCase(), { bold: true, color: "FFFFFF", bg: INK_HEX }),
       docxCell((tenantName || "").toUpperCase(), { bold: true, color: "FFFFFF", bg: INK_HEX }),
     ]),
-  ]);
+  ], { nCols: 3 });
 
   const explanation = [
     docxPara("<b>Veuillez trouver ci-après le tableau reprenant vos consommations d'énergie (mazout, gaz et électricité) et d'eau pour le(s) mois passé(s).</b> Nous attirons votre attention sur la colonne <b>« différence »</b> qui montre, en cas de valeur négative, le dépassement de vos consommations par rapport à vos provisions de charges.", { size: 20, align: "both", spacingAfter: 120 }),
@@ -219,7 +221,7 @@ function buildDecompteDocxXml(buildingName, unitName, tenantName, period, lines,
     docxCell(diffText, { bold: true, bg: PAPER_HEX, color: diffNegative ? RED_HEX : undefined }),
   ]);
 
-  const chargesTable = docxTable([headerRow, ...dataRows, totalRow]);
+  const chargesTable = docxTable([headerRow, ...dataRows, totalRow], { nCols: 7 });
 
   const footer = [
     docxPara("Un solde négatif (en rouge) correspond à un dépassement de consommation à régulariser. Un solde positif est en faveur du locataire.", { italic: true, size: 16, color: MUTED_HEX, spacingAfter: 60 }),
@@ -1999,10 +2001,10 @@ function DecomptesView({ data, setData, building }) {
     const annualMazout = studentTariffs.annualMazout ?? 6000;
     if (NIMY_ELEC_HEATING_UNITS.includes(unitId)) {
       mazoutNimyIsElecHeating = true;
-      mazoutNimyAuto = Math.round(NIMY_ELEC_HEATING_ANNUAL * months * 100) / 100;
+      mazoutNimyAuto = Math.round(NIMY_ELEC_HEATING_ANNUAL * (months / 12) * 100) / 100;
     } else {
       const remainderAnnual = (annualMazout - NIMY_ELEC_HEATING_UNITS.length * NIMY_ELEC_HEATING_ANNUAL) / 9;
-      mazoutNimyAuto = Math.round(remainderAnnual * months * 100) / 100;
+      mazoutNimyAuto = Math.round(remainderAnnual * (months / 12) * 100) / 100;
     }
   }
   const firstLineCost = skipHeatingRow ? 0 : (unit.hasIsta ? istaCost : (building === "nimy" ? (mazoutCost || mazoutNimyAuto) : mazoutCost));
