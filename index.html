@@ -1826,6 +1826,8 @@ function DecomptesView({ data, setData, building }) {
   const [mazoutCost, setMazoutCost] = useState(0);
   const [istaCost, setIstaCost] = useState(0);
   const [provisionOverride, setProvisionOverride] = useState(null);
+  const [elecConsoOverride, setElecConsoOverride] = useState(null);
+  const [eauConsoOverride, setEauConsoOverride] = useState(null);
   const [preview, setPreview] = useState(null);
   const [periodFromOverride, setPeriodFromOverride] = useState(null);
   const [periodToOverride, setPeriodToOverride] = useState(null);
@@ -1900,6 +1902,31 @@ function DecomptesView({ data, setData, building }) {
   }
   eauConso += sharedWaterConso;
   eauCost += sharedWaterCost;
+
+  // Nimy : aucun compteur d'eau individuel — répartition automatique du
+  // compteur général entre les 11 studios (RDC/Pigalle exclu, pas de
+  // provision de charges).
+  const NIMY_WATER_SHARE_DIVISOR = 11;
+  if (building === "nimy" && eauMeters.length === 0 && unitId !== "rdc") {
+    const nimyGeneralWater = data.meters.filter(m => m.building === "nimy" && m.type === "eau" && m.scope === "general");
+    const nimyWaterInterval = nimyGeneralWater.length ? lastInterval(nimyGeneralWater[0].readings) : null;
+    if (nimyWaterInterval) {
+      eauConso = nimyWaterInterval.conso / NIMY_WATER_SHARE_DIVISOR;
+      eauCost = eauConso * (studentTariffs.studentEau || 0);
+    }
+  }
+
+  // Surcharge manuelle de la consommation (électricité et/ou eau), pour
+  // tous les immeubles — remplace la valeur calculée et recalcule le coût
+  // au tarif étudiant. A toujours le dernier mot sur les calculs ci-dessus.
+  if (elecConsoOverride !== null) {
+    elecConso = elecConsoOverride;
+    elecCost = elecConsoOverride * (studentTariffs.studentElec || 0);
+  }
+  if (eauConsoOverride !== null) {
+    eauConso = eauConsoOverride;
+    eauCost = eauConsoOverride * (studentTariffs.studentEau || 0);
+  }
 
   const periodToDefault = (elecInterval[0]?.toDate) || (eauInterval[0]?.toDate) || todayISO();
   const periodFromDefault = (elecInterval[0]?.fromDate) || (eauInterval[0]?.fromDate) || (() => {
@@ -1997,7 +2024,7 @@ function DecomptesView({ data, setData, building }) {
     <div>
       <div className="card">
         <span className="label">Logement</span>
-        <select value={unitId} onChange={e => { setUnitId(e.target.value); setProvisionOverride(null); setMazoutCost(0); setIstaCost(0); setPeriodFromOverride(null); setPeriodToOverride(null); }}>
+        <select value={unitId} onChange={e => { setUnitId(e.target.value); setProvisionOverride(null); setElecConsoOverride(null); setEauConsoOverride(null); setMazoutCost(0); setIstaCost(0); setPeriodFromOverride(null); setPeriodToOverride(null); }}>
           {b.units.map(u => <option key={u.id} value={u.id}>{u.name} — {u.tenant || "Vacant"}</option>)}
         </select>
       </div>
@@ -2036,8 +2063,30 @@ function DecomptesView({ data, setData, building }) {
                   <td><input type="number" step="0.01" value={(unit.hasIsta ? istaCost : mazoutCost) || ""} placeholder="0" onChange={e => (unit.hasIsta ? setIstaCost : setMazoutCost)(parseFloat(e.target.value) || 0)} style={{ width: 90, textAlign: "right" }} /></td>
                 </tr>
               )}
-              <tr><td>Électricité{elecAdj.mode !== "none" ? " *" : ""}{unit.elecOverrideZero ? " (n/a)" : ""}</td><td>{fmtNum(elecConso, 1)} kWh</td><td>{fmtEUR(elecCost)}</td></tr>
-              <tr><td>Eau / Nettoyage{eauAdj.mode !== "none" ? " *" : ""}</td><td>{fmtNum(eauConso, 1)} m³</td><td>{fmtEUR(eauCost)}</td></tr>
+              <tr>
+                <td>Électricité{elecAdj.mode !== "none" ? " *" : ""}{unit.elecOverrideZero ? " (n/a)" : ""}{elecConsoOverride !== null ? " (modifié)" : ""}</td>
+                <td>
+                  <input type="number" step="0.1" value={fmtNum(elecConso, 1).replace(/\s/g, "").replace(",", ".")}
+                    onChange={e => setElecConsoOverride(e.target.value === "" ? 0 : parseFloat(e.target.value))}
+                    style={{ width: 70, textAlign: "right" }} /> kWh
+                  {elecConsoOverride !== null && (
+                    <button className="btn btn-ghost" style={{ padding: "2px 6px", fontSize: 11, marginLeft: 4 }} onClick={() => setElecConsoOverride(null)}>↺</button>
+                  )}
+                </td>
+                <td>{fmtEUR(elecCost)}</td>
+              </tr>
+              <tr>
+                <td>Eau / Nettoyage{eauAdj.mode !== "none" ? " *" : ""}{eauConsoOverride !== null ? " (modifié)" : ""}</td>
+                <td>
+                  <input type="number" step="0.1" value={fmtNum(eauConso, 1).replace(/\s/g, "").replace(",", ".")}
+                    onChange={e => setEauConsoOverride(e.target.value === "" ? 0 : parseFloat(e.target.value))}
+                    style={{ width: 70, textAlign: "right" }} /> m³
+                  {eauConsoOverride !== null && (
+                    <button className="btn btn-ghost" style={{ padding: "2px 6px", fontSize: 11, marginLeft: 4 }} onClick={() => setEauConsoOverride(null)}>↺</button>
+                  )}
+                </td>
+                <td>{fmtEUR(eauCost)}</td>
+              </tr>
               {unit.sharedWaterPassage && (
                 <tr style={{ fontSize: 12, color: MUTED }}>
                   <td>↳ dont eau froide (compteur passage ÷6)</td>
