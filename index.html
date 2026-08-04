@@ -1176,6 +1176,12 @@ function BuildingsView({ data, setData, building }) {
                   <input type="number" step="0.01" defaultValue={tariffs.gaz} onBlur={e => updateTariff("gaz", e.target.value)} />
                 </div>
               )}
+              {building === "nimy" && (
+                <div>
+                  <span className="label">Mazout — facture annuelle (€)</span>
+                  <input type="number" step="1" defaultValue={tariffs.annualMazout ?? 6000} onBlur={e => updateTariff("annualMazout", e.target.value)} />
+                </div>
+              )}
             </div>
           </>
         )}
@@ -1269,6 +1275,25 @@ function sumLastInterval(meters) {
     if (li) { conso += li.conso; cost += li.cost; n++; }
   });
   return { conso, cost, n };
+}
+
+// Compare chaque compteur individuel (déjà existant pour ce type/immeuble) à
+// la date du dernier relevé du/des compteur(s) général/aux correspondant(s).
+// "Pas à jour" = dernier relevé antérieur à celui du général le plus récent.
+function missingUpToDateMeters(data, building, type, unitNames) {
+  const meters = data.meters.filter(m => m.building === building && m.type === type);
+  const general = meters.filter(m => m.scope === "general");
+  const individual = meters.filter(m => m.scope === "unit");
+  if (individual.length === 0) return { total: 0, missing: 0, names: [] };
+  const generalDates = general.map(m => m.readings[m.readings.length - 1]?.[0]).filter(Boolean);
+  if (generalDates.length === 0) return { total: individual.length, missing: 0, names: [] };
+  const generalLastDate = generalDates.slice().sort().slice(-1)[0];
+  const names = [];
+  individual.forEach(m => {
+    const last = m.readings[m.readings.length - 1]?.[0];
+    if (!last || last < generalLastDate) names.push(unitNames?.[m.unit] || m.unit);
+  });
+  return { total: individual.length, missing: names.length, names };
 }
 
 function getAdjustment(data, building, type) {
@@ -1420,6 +1445,19 @@ function BilanCard({ data, setData, building, onShowReport }) {
 
   const generalCount = { elec: genElecMeters.length, eau: genEauMeters.length, gaz: genGaz.length };
   const nUnits = b.units.length;
+  const unitNames = {};
+  b.units.forEach(u => { unitNames[u.id] = u.name; });
+  const missingElec = missingUpToDateMeters(data, building, "elec", unitNames);
+  const missingEau = building === "nimy" ? null : missingUpToDateMeters(data, building, "eau", unitNames);
+
+  const MissingAlert = ({ info }) => {
+    if (!info || info.missing === 0) return null;
+    return (
+      <div style={{ fontSize: 12, color: ACCENT, fontWeight: 700, marginBottom: 8, padding: 8, background: "#FBF2E4", borderRadius: 8 }}>
+        ⚠️ {info.missing} compteur{info.missing > 1 ? "s" : ""} individuel{info.missing > 1 ? "s" : ""} pas encore relevé{info.missing > 1 ? "s" : ""} pour cette période ({info.names.join(", ")})
+      </div>
+    );
+  };
 
   return (
     <div className="card">
@@ -1429,9 +1467,11 @@ function BilanCard({ data, setData, building, onShowReport }) {
         <span style={{ color: RED, fontWeight: 700 }}>rouge</span>) peut indiquer une fuite, un vol, ou un relevé manquant.
       </div>
 
+      <MissingAlert info={missingElec} />
       <BilanRow label={`Électricité (${generalCount.elec} compteur(s) général/aux)`} gen={genElec} ind={indElec} unit="kWh" adjustment={getAdjustment(data, building, "elec")} />
       <AdjustmentBlock data={data} setData={setData} building={building} type="elec" gen={genElec} ind={indElec} label="Ajustement Électricité" unitLabel="kWh" nUnits={nUnits} onShowReport={onShowReport} />
 
+      <MissingAlert info={missingEau} />
       <BilanRow label={`Eau (${generalCount.eau} compteur(s) général/aux)`} gen={genEau} ind={indEau} unit="m³" adjustment={getAdjustment(data, building, "eau")} />
       <AdjustmentBlock data={data} setData={setData} building={building} type="eau" gen={genEau} ind={indEau} label="Ajustement Eau" unitLabel="m³" nUnits={nUnits} onShowReport={onShowReport} />
 
@@ -1951,7 +1991,21 @@ function DecomptesView({ data, setData, building }) {
   eauCost += cleaningCost;
 
   const skipHeatingRow = building === "biche";
-  const firstLineCost = skipHeatingRow ? 0 : (unit.hasIsta ? istaCost : mazoutCost);
+  const NIMY_ELEC_HEATING_UNITS = ["studio10", "studio11"];
+  const NIMY_ELEC_HEATING_ANNUAL = 180;
+  let mazoutNimyAuto = 0;
+  let mazoutNimyIsElecHeating = false;
+  if (building === "nimy" && unitId !== "rdc") {
+    const annualMazout = studentTariffs.annualMazout ?? 6000;
+    if (NIMY_ELEC_HEATING_UNITS.includes(unitId)) {
+      mazoutNimyIsElecHeating = true;
+      mazoutNimyAuto = Math.round(NIMY_ELEC_HEATING_ANNUAL * months * 100) / 100;
+    } else {
+      const remainderAnnual = (annualMazout - NIMY_ELEC_HEATING_UNITS.length * NIMY_ELEC_HEATING_ANNUAL) / 9;
+      mazoutNimyAuto = Math.round(remainderAnnual * months * 100) / 100;
+    }
+  }
+  const firstLineCost = skipHeatingRow ? 0 : (unit.hasIsta ? istaCost : (building === "nimy" ? (mazoutCost || mazoutNimyAuto) : mazoutCost));
   const total = firstLineCost + elecCost + eauCost;
   const diff = provision - total;
 
@@ -1975,7 +2029,8 @@ function DecomptesView({ data, setData, building }) {
   };
 
   const buildLines = (m, e, w, isIsta, skipHeatingRow) => {
-    const heatingRow = { label: isIsta ? "Chauffage / Eau chaude" : "Mazout / Chauffage (quote-part)", conso: isIsta ? "ISTA" : "—", cost: fmtNum(m, 2), days: days };
+    const nimyElecHeating = building === "nimy" && NIMY_ELEC_HEATING_UNITS.includes(unitId);
+    const heatingRow = { label: isIsta ? "Chauffage / Eau chaude" : (nimyElecHeating ? "Mazout / Eau chaude sanitaire" : (building === "nimy" ? "Mazout / Chauffage / Eau chaude sanitaire (quote-part)" : "Mazout / Chauffage (quote-part)")), conso: isIsta ? "ISTA" : "—", cost: fmtNum(m, 2), days: days };
     const rows = [
       { label: "Électricité", conso: fmtNum(e.conso, 1), cost: fmtNum(e.cost, 2), days: e.days || days },
       { label: "Eau / Nettoyage", conso: fmtNum(w.conso, 1), cost: fmtNum(w.cost, 2), days: w.days || days,
@@ -2058,9 +2113,9 @@ function DecomptesView({ data, setData, building }) {
             <tbody>
               {!skipHeatingRow && (
                 <tr>
-                  <td>{unit.hasIsta ? "Chauffage / Eau chaude" : "Mazout / Chauffage (quote-part)"}</td>
+                  <td>{unit.hasIsta ? "Chauffage / Eau chaude" : (mazoutNimyIsElecHeating ? "Mazout / Eau chaude sanitaire" : (building === "nimy" ? "Mazout / Chauffage / Eau chaude sanitaire (quote-part)" : "Mazout / Chauffage (quote-part)"))}</td>
                   <td>{unit.hasIsta ? "ISTA" : "—"}</td>
-                  <td><input type="number" step="0.01" value={(unit.hasIsta ? istaCost : mazoutCost) || ""} placeholder="0" onChange={e => (unit.hasIsta ? setIstaCost : setMazoutCost)(parseFloat(e.target.value) || 0)} style={{ width: 90, textAlign: "right" }} /></td>
+                  <td><input type="number" step="0.01" value={(unit.hasIsta ? istaCost : (building === "nimy" ? (mazoutCost || mazoutNimyAuto) : mazoutCost)) || ""} placeholder="0" onChange={e => (unit.hasIsta ? setIstaCost : setMazoutCost)(parseFloat(e.target.value) || 0)} style={{ width: 90, textAlign: "right" }} /></td>
                 </tr>
               )}
               <tr>
