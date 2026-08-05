@@ -13,6 +13,8 @@
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
 <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   html, body { margin:0; padding:0; }
   #root { min-height: 100vh; }
@@ -567,6 +569,22 @@ async function shareDecompteDoc(buildingName, unitName, tenantName, period, line
 }
 
 // Fallback: classic blob download (works in desktop browsers; unreliable in iOS standalone apps).
+// Génère un vrai PDF téléchargeable à partir de l'aperçu du décompte tel
+// qu'affiché à l'écran (capture visuelle), sans dépendre du moteur
+// d'impression du navigateur — évite les soucis de mise en page/pages
+// vides constatés avec window.print().
+async function downloadDecomptePdf(buildingName, unitName, period) {
+  const el = document.getElementById("decompte-capture-area");
+  if (!el || !window.html2canvas || !window.jspdf) return;
+  const canvas = await window.html2canvas(el, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+  const imgData = canvas.toDataURL("image/jpeg", 0.95);
+  const pageWidthMM = 210;
+  const pageHeightMM = (canvas.height * pageWidthMM) / canvas.width;
+  const doc = new window.jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: [pageWidthMM, pageHeightMM] });
+  doc.addImage(imgData, "JPEG", 0, 0, pageWidthMM, pageHeightMM);
+  doc.save(decompteFilename(buildingName, unitName, period, "pdf"));
+}
+
 async function downloadDecompteDoc(buildingName, unitName, tenantName, period, lines, totals) {
   const html = buildDecompteHtml(buildingName, unitName, tenantName, period, lines, totals);
   const { blob, ext } = await buildDecompteBlob(buildingName, unitName, tenantName, period, lines, totals, html);
@@ -660,6 +678,7 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
         <button className="btn btn-ghost" onClick={onClose}><ArrowLeft size={15} /> Retour</button>
         <button className="btn btn-primary" onClick={() => window.print()}><FileText size={15} /> Imprimer / Enregistrer en PDF</button>
         <button className="btn" onClick={onDownloadDoc} style={{ background: "#4f6ef7", color: "#fff", border: "none" }}><Download size={15} /> Télécharger le .docx</button>
+        <button className="btn no-print" onClick={() => downloadDecomptePdf(b.name, unit.name, period)} style={{ background: "#0891b2", color: "#fff", border: "none" }}><Download size={15} /> Télécharger en PDF</button>
         <button className="btn btn-success" onClick={handleSaveOneDrive} disabled={saveOneDriveState === "saving"}
           style={{ background: saveOneDriveState === "ok" ? "#16a34a" : saveOneDriveState === "err" ? "#dc2626" : "linear-gradient(135deg,#16a34a,#15803d)", color: "#fff", border: "none" }}>
           {saveOneDriveState === "saving" ? "⏳ Sauvegarde…" : saveOneDriveState === "ok" ? "✓ Sauvegardé !" : saveOneDriveState === "err" ? "✗ Erreur" : "☁️ Sauvegarder le décompte (OneDrive)"}
@@ -675,6 +694,7 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
         </div>
       )}
 
+      <div id="decompte-capture-area">
       <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 14 }}>
         <tbody><tr>
           {[b.name, unit.name, tenant].map((t, i) => (
@@ -728,6 +748,7 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
         Un solde positif est en faveur du locataire.
       </p>
       <p style={{ fontSize: 12, color: MUTED }}>Document établi le {fmtDate(todayISO())}</p>
+      </div>
     </div>
   );
 }
