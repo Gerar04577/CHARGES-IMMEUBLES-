@@ -769,6 +769,17 @@ function App() {
   const [tab, setTab] = useState("dashboard");
   const [building, setBuilding] = useState("biche");
   const [loaded, setLoaded] = useState(false);
+  const [importAlert, setImportAlert] = useState(true); // message rouge ouverture
+  const [saveReminder, setSaveReminder] = useState(false); // rappel toutes les 5 min
+
+  // Rappel de sauvegarde toutes les 5 minutes
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setSaveReminder(true);
+      setTimeout(() => setSaveReminder(false), 10000);
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Ensure a sensible mobile viewport (the standalone HTML build already sets
   // this in <head>; this is a harmless fallback when run inside an embedded
@@ -836,6 +847,17 @@ function App() {
     <div className="app-root">
       <GlobalStyle />
       <TopBar tab={tab} />
+      {importAlert && (
+        <div style={{ background: "#dc2626", color: "#fff", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 14, fontWeight: 600, position: "sticky", top: 0, zIndex: 999 }}>
+          <span>⚠️ Avez-vous importé la dernière sauvegarde OneDrive ?</span>
+          <button onClick={() => setImportAlert(false)} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 700 }}>✓ Oui</button>
+        </div>
+      )}
+      {saveReminder && (
+        <div style={{ background: "#b45309", color: "#fff", padding: "10px 16px", fontSize: 14, fontWeight: 600, position: "sticky", top: 0, zIndex: 998, textAlign: "center" }}>
+          ⏰ N'oubliez pas de sauvegarder vos données !
+        </div>
+      )}
       {(tab === "buildings" || tab === "meters" || tab === "decomptes") && (
         <div className="seg">
           {buildings.map(b => (
