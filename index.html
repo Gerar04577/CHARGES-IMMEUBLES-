@@ -1027,6 +1027,7 @@ function BackupBar({ data, setData }) {
         body: JSON.stringify({ action: "save", data: base64, filename: "charges-data.json" })
       });
       if (response.ok) {
+        clearPendingSync();
         flash("ok", "✓ Sauvegarde automatique OneDrive réussie");
       } else {
         flash("err", "Erreur Make.com : " + response.status);
