@@ -816,7 +816,8 @@ function App() {
           });
           if (response.ok) {
             const text = await response.text();
-            const parsed = JSON.parse(atob(text.trim()));
+            const decoded = decodeURIComponent(escape(atob(text.trim())));
+            const parsed = JSON.parse(decoded);
             if (parsed.buildings && parsed.meters) {
               setData(parsed);
               await window.storage.set("charges-data", JSON.stringify(parsed)).catch(() => {});
