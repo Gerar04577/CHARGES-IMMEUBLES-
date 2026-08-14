@@ -773,7 +773,7 @@ function App() {
   const [saveReminder, setSaveReminder] = useState(false);
   const isInitialLoad = React.useRef(true);
 
-  // Rappel de sauvegarde toutes les 10 minutes (comme Gestion Loyers)
+  // Rappel de sauvegarde toutes les 5 minutes
   React.useEffect(() => {
     const interval = setInterval(() => {
       setSaveReminder(true);
@@ -805,7 +805,7 @@ function App() {
           setLoaded(true);
           return;
         }
-        // 1) Essayer OneDrive d'abord (comme Gestion Loyers)
+        // 1) Essayer OneDrive d'abord
         try {
           const controller = new AbortController();
           setTimeout(() => controller.abort(), 10000);
@@ -822,15 +822,13 @@ function App() {
               await window.storage.set("charges-data", JSON.stringify(parsed)).catch(() => {});
               clearPendingSync();
               const t = new Date().toLocaleTimeString("fr-BE", { hour: "2-digit", minute: "2-digit" });
-              setLoadMsg("\u2601\ufe0f Derni\u00e8re sauvegarde OneDrive charg\u00e9e, vous pouvez travailler. Mais n'oubliez pas de sauvegarder ! (" + t + ")");
+              setLoadMsg("☁️ Dernière sauvegarde OneDrive chargée. Mais n'oubliez pas de sauvegarder ! (" + t + ")");
               setTimeout(() => setLoadMsg(null), 10000);
               setLoaded(true);
               return;
             }
           }
-        } catch (e) {
-          // OneDrive non disponible — repli sur localStorage
-        }
+        } catch (e) { /* OneDrive non disponible */ }
         // 2) Repli sur localStorage
         const res = await window.storage.get("charges-data");
         if (res && res.value) {
@@ -875,10 +873,10 @@ function App() {
   return (
     <div className="app-root">
       <GlobalStyle />
-      <TopBar tab={tab} /> style={{ background: "#fff", color: "#dc2626", border: "none", borderRadius: 12, padding: "16px 40px", cursor: "pointer", fontWeight: 800, fontSize: 18, width: "100%" }}>
-              ✓ Oui, c'est fait
-            </button>
-          </div>
+      <TopBar tab={tab} />
+      {loadMsg && (
+        <div style={{ background: "#d1fae5", color: "#065f46", padding: "10px 16px", fontSize: 13, fontWeight: 600, textAlign: "center" }}>
+          {loadMsg}
         </div>
       )}
       {saveReminder && (
@@ -1056,7 +1054,6 @@ function BackupBar({ data, setData }) {
       setBusy(false);
     }
   };
-
 
   const importData = (e) => {
     const f = e.target.files?.[0];
