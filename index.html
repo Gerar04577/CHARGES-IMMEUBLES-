@@ -686,6 +686,9 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
         <button className="btn" onClick={() => window.open('https://gerar04577.github.io/ENVOI-DECOMPTES/charges-envoi.html', '_blank')} style={{ background: "linear-gradient(135deg,#4f6ef7,#7c3aed)", color: "#fff", border: "none" }}>
           📬 Envoyer
         </button>
+        <button className="btn" onClick={() => window.open('https://gerar04577.github.io/CHARGES-IMMEUBLES-/remboursement.html', '_blank')} style={{ background: "linear-gradient(135deg,#f0abfc,#c084fc)", color: "#fff", border: "none" }}>
+          💶 Remboursement
+        </button>
       </div>
       {shareState === "unsupported" && (
         <div className="no-print" style={{ fontSize: 12, color: MUTED, marginBottom: 10, padding: 8, background: PAPER, borderRadius: 8 }}>
@@ -1167,82 +1170,6 @@ function Dashboard({ data, setData, onGo }) {
 /* ============================================================
    BUILDINGS / UNITS / TENANTS VIEW
    ============================================================ */
-
-// ============================================================
-// METER SERIAL EDITOR — composant autonome et isolé
-// Permet de modifier le numéro (serial) des compteurs individuels
-// ============================================================
-function MeterSerialEditor({ data, setData, building }) {
-  const unitMeters = data.meters.filter(m => m.building === building && m.scope === "unit");
-  if (unitMeters.length === 0) return null;
-
-  const getDisplaySerial = (m) => {
-    if (m.serial !== null && m.serial !== undefined) return m.serial;
-    if (m.id === "m28") return "salle de bain";
-    if (m.id === "m29") return "cuisine";
-    return "";
-  };
-
-  const updateSerial = (meterId, newSerial) => {
-    setData(prev => {
-      const next = JSON.parse(JSON.stringify(prev));
-      const m = next.meters.find(x => x.id === meterId);
-      if (!m) return prev;
-      m.serial = newSerial;
-      // Mettre à jour le label automatiquement
-      m.label = m.label.replace(/\(n°[^)]*\)/, "(n° " + newSerial + ")");
-      if (!m.label.includes("(n°")) {
-        m.label = m.label + " (n° " + newSerial + ")";
-      }
-      return next;
-    });
-  };
-
-  // Grouper par logement
-  const byUnit = {};
-  unitMeters.forEach(m => {
-    if (!byUnit[m.unit]) byUnit[m.unit] = [];
-    byUnit[m.unit].push(m);
-  });
-
-  return (
-    <div className="card" style={{ marginTop: 16 }}>
-      <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12, color: "#1F4E79" }}>
-        🔢 Numéros de compteurs individuels
-      </div>
-      {Object.entries(byUnit).map(([unitId, meters]) => {
-        const unit = data.buildings.find(b => b.id === building)?.units.find(u => u.id === unitId);
-        return (
-          <div key={unitId} style={{ marginBottom: 12 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, color: "#555", marginBottom: 4 }}>
-              {unit?.name || unitId}
-            </div>
-            {meters.map(m => (
-              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 12, color: "#888", width: 60 }}>
-                  {m.type === "elec" ? "⚡ Élec" : "💧 Eau"}
-                </span>
-                <input
-                  type="text"
-                  defaultValue={getDisplaySerial(m)}
-                  onBlur={e => {
-                    const val = e.target.value.trim();
-                    if (val !== String(getDisplaySerial(m))) {
-                      updateSerial(m.id, val);
-                    }
-                  }}
-                  style={{ flex: 1, padding: "4px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 13 }}
-                  placeholder="Numéro de compteur"
-                />
-              </div>
-            ))}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function BuildingsView({ data, setData, building }) {
   const b = data.buildings.find(x => x.id === building);
   const [editingTariffs, setEditingTariffs] = useState(true);
@@ -1353,7 +1280,6 @@ function BuildingsView({ data, setData, building }) {
       {b.units.map(u => (
         <UnitCard key={u.id} unit={u} onUpdate={(patch) => updateUnit(u.id, patch)} onTenantChange={(name) => addTenantChange(u.id, name)} />
       ))}
-      <MeterSerialEditor data={data} setData={setData} building={building} />
     </div>
   );
 }

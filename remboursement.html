@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <title>Remboursements</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
+  <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f7; color: #1a1a1a; }
+    .app { max-width: 600px; margin: 0 auto; padding: 16px; padding-bottom: 40px; }
+    .header { background: #1F4E79; color: #fff; padding: 16px; border-radius: 12px; margin-bottom: 16px; }
+    .header h1 { font-size: 20px; font-weight: 700; }
+    .header p { font-size: 12px; opacity: 0.8; margin-top: 4px; }
+    .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .card-title { font-size: 13px; font-weight: 700; color: #1F4E79; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 12px; font-weight: 600; color: #555; margin-bottom: 4px; }
+    .field input, .field select, .field textarea { width: 100%; padding: 10px 12px; border: 1.5px solid #e0e0e0; border-radius: 8px; font-size: 14px; font-family: inherit; outline: none; transition: border-color 0.2s; background: #fff; }
+    .field input:focus, .field select:focus, .field textarea:focus { border-color: #1F4E79; }
+    .field input[readonly] { background: #f5f5f7; color: #888; }
+    .field textarea { resize: vertical; min-height: 60px; }
+    .field-row { display: flex; gap: 8px; }
+    .field-row .field { flex: 1; }
+    .total-box { background: #f0f7ff; border: 2px solid #1F4E79; border-radius: 10px; padding: 14px; margin-top: 8px; text-align: center; }
+    .total-box .label { font-size: 12px; color: #1F4E79; font-weight: 600; }
+    .total-box .amount { font-size: 28px; font-weight: 800; margin-top: 4px; }
+    .total-positive { color: #16a34a; }
+    .total-negative { color: #dc2626; }
+    .total-zero { color: #888; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 12px 18px; border-radius: 10px; border: none; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; justify-content: center; margin-bottom: 8px; }
+    .btn-primary { background: #1F4E79; color: #fff; }
+    .btn-green { background: #16a34a; color: #fff; }
+    .btn-orange { background: #d97706; color: #fff; }
+    .btn-gray { background: #e5e7eb; color: #374151; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .msg { padding: 10px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; margin-bottom: 12px; text-align: center; }
+    .msg-ok { background: #d1fae5; color: #065f46; }
+    .msg-err { background: #fee2e2; color: #991b1b; }
+    .msg-info { background: #dbeafe; color: #1e40af; }
+    .section-sep { height: 1px; background: #e5e7eb; margin: 12px 0; }
+    .select-group { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .select-group select { flex: 1; min-width: 120px; padding: 10px 12px; border: 1.5px solid #e0e0e0; border-radius: 8px; font-size: 14px; outline: none; background: #fff; }
+    .select-group select:focus { border-color: #1F4E79; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 700; }
+    .badge-biche { background: #dbeafe; color: #1e40af; }
+    .badge-nimy { background: #d1fae5; color: #065f46; }
+    .badge-ptg { background: #fef3c7; color: #92400e; }
+    .badge-other { background: #f3f4f6; color: #374151; }
+    .search-results { margin-top: 8px; }
+    .search-result-item { padding: 10px 12px; border-radius: 8px; border: 1px solid #e0e0e0; margin-bottom: 6px; cursor: pointer; transition: background 0.15s; }
+    .search-result-item:hover { background: #f0f7ff; border-color: #1F4E79; }
+    .search-result-item .name { font-weight: 600; font-size: 14px; }
+    .search-result-item .sub { font-size: 12px; color: #888; margin-top: 2px; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .modal { background: #fff; border-radius: 16px; padding: 32px 24px; width: 100%; max-width: 380px; text-align: center; }
+    .modal h2 { font-size: 20px; font-weight: 800; color: #1F4E79; margin-bottom: 12px; }
+    .modal p { font-size: 15px; color: #444; margin-bottom: 24px; line-height: 1.5; }
+    .modal .btn { margin-bottom: 0; }
+    .tab-bar { display: flex; gap: 8px; margin-bottom: 16px; background: #e5e7eb; border-radius: 10px; padding: 4px; }
+    .tab { flex: 1; padding: 8px; border-radius: 8px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; background: transparent; color: #555; }
+    .tab.active { background: #fff; color: #1F4E79; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+const WEBHOOK = "https://hook.eu1.make.com/pya67pi1a9tsccwgssa7pieib9wa5438";
+
+// Immeubles avec décompte
+const IMMEUBLES_AVEC_DECOMPTE = ['biche', 'nimy', 'ptg'];
+
+// Données garanties extraites depuis Excel BauxGaranties
+const GARANTIES_EXCEL = [
+  { local: "STUDIO 1 NIMY", locataire: "Cyril MESSE", montant: 650, forme: "Liquide", immeuble: "nimy" },
+  { local: "STUDIO 2 NIMY", locataire: "Safiya BACHIRI", montant: 650, forme: "Liquide", immeuble: "nimy" },
+  { local: "STUDIO 3 NIMY", locataire: "Déborah SNAUWAERT", montant: 600, forme: "Liquide", immeuble: "nimy" },
+  { local: "STUDIO 4 NIMY", locataire: "Maxence SAUCIN", montant: 620, forme: "Liquide", immeuble: "nimy" },
+  { local: "STUDIO 5 NIMY", locataire: "Kawtar MARZAQ", montant: 680, forme: "Liquide", immeuble: "nimy" },
+  { local: "Studio 6 NIMY", locataire: "Zachari CALISTRI", montant: 670, forme: "Liquide", immeuble: "nimy" },
+  { local: "STUDIO 7 NIMY", locataire: "DELLA Giustina Loris", montant: 660, forme: "Liquide", immeuble: "nimy" },
+  { local: "STUDIO 8 NIMY", locataire: "DE SAINTE Charlotte", montant: 690, forme: "Liquide", immeuble: "nimy" },
+  { local: "STUDIO 9 NIMY", locataire: "Anastasia KOZLENKO", montant: 1010, forme: "Liquide", immeuble: "nimy" },
+  { local: "STUDIO 10 NIMY", locataire: "Souleiman HODO", montant: 1635, forme: "Liquide", immeuble: "nimy" },
+  { local: "STUDIO 11 NIMY", locataire: "Nell GEERAERTS", montant: 1150, forme: "Liquide", immeuble: "nimy" },
+  { local: "Appart 3 GUIRLANDE", locataire: "Maxime NOVAS & Maxime NACHBAURER", montant: 1950, forme: "Liquide", immeuble: "ptg" },
+  { local: "STUDIO 4 GUIRLANDE", locataire: "Jordan SCHOONHEERE", montant: 900, forme: "Liquide", immeuble: "ptg" },
+  { local: "STUDIO 5 GUIRLANDE", locataire: "Damien CZAJA", montant: 960, forme: "Liquide", immeuble: "ptg" },
+  { local: "STUDIO 6 GUIRLANDE", locataire: "Emma DUCHATEAU", montant: 760, forme: "Liquide", immeuble: "ptg" },
+  { local: "STUDIO 7 GUIRLANDE", locataire: "DELMOTE Ema", montant: 660, forme: "Liquide", immeuble: "ptg" },
+  { local: "STUDIO 8 GUIRLANDE", locataire: "Vincent ISTASSE", montant: 650, forme: "Liquide", immeuble: "ptg" },
+  { local: "Studio 9 GUIRLANDE", locataire: "HIFOUF Hayat", montant: 630, forme: "Liquide", immeuble: "ptg" },
+  { local: "STUDIO 10 GUIRLANDE", locataire: "Laura WILLAM", montant: 640, forme: "Liquide", immeuble: "ptg" },
+  { local: "Appart 1er PTG", locataire: "Adeline DEVOS", montant: 1150, forme: "Liquide", immeuble: "ptg" },
+  { local: "DUPLEX GUIRLANDE", locataire: "ZUFFANTI Léna & BERTE Matis", montant: 1980, forme: "Liquide", immeuble: "ptg" },
+  { local: "APPART BICHE", locataire: "Shanell TORABI", montant: 1140, forme: "Liquide", immeuble: "biche" },
+  { local: "STUDIO 1 BICHE", locataire: "Manon BRESSAN", montant: 710, forme: "Liquide", immeuble: "biche" },
+  { local: "STUDIO 2 BICHE", locataire: "Lise HARDI", montant: 1065, forme: "Liquide", immeuble: "biche" },
+  { local: "STUDIO 3 BICHE", locataire: "Matteo CESARO", montant: 600, forme: "Liquide", immeuble: "biche" },
+  { local: "STUDIO 4 BICHE", locataire: "Emmanuelle MICHAUX", montant: 710, forme: "Liquide", immeuble: "biche" },
+  { local: "STUDIO 5 BICHE", locataire: "Laurent DECLERCQ-BISCO", montant: 650, forme: "Liquide", immeuble: "biche" },
+  { local: "STUDIO 6 BICHE", locataire: "Jules AMOURI", montant: 690, forme: "Liquide", immeuble: "biche" },
+  { local: "STUDIO 7 BICHE", locataire: "Lucie CRANSQUINT", montant: 710, forme: "Liquide", immeuble: "biche" },
+  { local: "STUDIO 8 BICHE", locataire: "Axel ALVES GOMES", montant: 1065, forme: "Liquide", immeuble: "biche" },
+  { local: "STUDIO 9 BICHE", locataire: "Théo PASCALI", montant: 710, forme: "Liquide", immeuble: "biche" },
+  { local: "STUDIO 10 BICHE", locataire: "Lorna COSTER", montant: 650, forme: "Liquide", immeuble: "biche" },
+  { local: "STUDIO 11 BICHE", locataire: "Valentine DEGROOTE", montant: 710, forme: "Liquide", immeuble: "biche" },
+];
+
+const FORMES_GARANTIE = ["Liquide", "Compte bancaire bloqué", "Garantie bancaire", "CPAS"];
+
+function cleanStr(s) {
+  return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+}
+
+function fmt(n) {
+  if (n === null || n === undefined || n === "") return "—";
+  const v = parseFloat(n);
+  if (isNaN(v)) return "—";
+  return (v >= 0 ? "+" : "") + v.toFixed(2).replace(".", ",") + " €";
+}
+
+function fmtAbs(n) {
+  if (n === null || n === undefined || n === "") return "—";
+  const v = parseFloat(n);
+  if (isNaN(v)) return "—";
+  return v.toFixed(2).replace(".", ",") + " €";
+}
+
+// Générer un .docx simple via JSZip
+async function buildRemboursementDocx(data) {
+  const {
+    immeuble, logement, locataire, annee,
+    garantieMontant, garantieForme, garantieCommentaire,
+    decompte, degats, total, avecDecompte
+  } = data;
+
+  const rows = [];
+
+  rows.push(`<w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="1F4E79"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="22"/></w:rPr><w:t>Élément</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="1F4E79"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="22"/></w:rPr><w:t>Montant</w:t></w:r></w:p></w:tc></w:tr>`);
+
+  const addRow = (label, value, fill = "FFFFFF", bold = false) => {
+    rows.push(`<w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="${fill}"/></w:tcPr><w:p><w:r><w:rPr>${bold ? "<w:b/>" : ""}<w:sz w:val="20"/></w:rPr><w:t>${label}</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="${fill}"/></w:tcPr><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:rPr>${bold ? "<w:b/>" : ""}<w:sz w:val="20"/></w:rPr><w:t>${value}</w:t></w:r></w:p></w:tc></w:tr>`);
+  };
+
+  const gVal = parseFloat(garantieMontant) || 0;
+  const dVal = parseFloat(decompte) || 0;
+  const dgVal = parseFloat(degats) || 0;
+  const tVal = parseFloat(total) || 0;
+  const totalFill = tVal >= 0 ? "D1FAE5" : "FEE2E2";
+
+  addRow(`Garantie locative (${garantieForme})`, `+ ${gVal.toFixed(2).replace(".", ",")} €`);
+  if (avecDecompte) addRow("Résultat du décompte de charges", `${dVal >= 0 ? "+" : ""}${dVal.toFixed(2).replace(".", ",")} €`);
+  addRow("Dégâts locatifs", `${dgVal.toFixed(2).replace(".", ",")} €`);
+  addRow("TOTAL — " + (tVal >= 0 ? "Remboursement" : "Solde dû"), `${tVal >= 0 ? "+" : ""}${tVal.toFixed(2).replace(".", ",")} €`, totalFill, true);
+
+  const commentaireXml = (garantieCommentaire || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
+  xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<w:body>
+<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="0"/></w:pPr>
+  <w:r><w:rPr><w:b/><w:sz w:val="36"/><w:color w:val="1F4E79"/></w:rPr><w:t>DÉCOMPTE DE REMBOURSEMENT</w:t></w:r>
+</w:p>
+<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="160"/></w:pPr>
+  <w:r><w:rPr><w:sz w:val="24"/><w:color w:val="555555"/></w:rPr><w:t>${immeuble} — ${logement} — ${annee}</w:t></w:r>
+</w:p>
+<w:p><w:pPr><w:spacing w:after="80"/></w:pPr>
+  <w:r><w:rPr><w:b/><w:sz w:val="22"/></w:rPr><w:t>Locataire : </w:t></w:r>
+  <w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t>${locataire}</w:t></w:r>
+</w:p>
+<w:tbl>
+<w:tblPr><w:tblW w:w="6000" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/><w:left w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/><w:right w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/></w:tblBorders></w:tblPr>
+${rows.join("\n")}
+</w:tbl>
+${commentaireXml ? `<w:p><w:pPr><w:spacing w:before="200" w:after="80"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="20"/></w:rPr><w:t>Commentaire :</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:after="80"/></w:pPr><w:r><w:rPr><w:sz w:val="20"/><w:i/></w:rPr><w:t>${commentaireXml}</w:t></w:r></w:p>` : ""}
+<w:p><w:pPr><w:spacing w:before="400" w:after="80"/></w:pPr>
+  <w:r><w:rPr><w:sz w:val="18"/><w:color w:val="888888"/><w:i/></w:rPr><w:t>Document établi le ${new Date().toLocaleDateString("fr-BE")} — S.A. SAMADHI</w:t></w:r>
+</w:p>
+</w:body></w:document>`;
+
+  const zip = new JSZip();
+  zip.file("_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`);
+  zip.file("word/document.xml", xml);
+  zip.file("word/_rels/document.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`);
+  zip.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`);
+
+  return await zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+}
+
+function App() {
+  const [tab, setTab] = useState("saisie"); // saisie | recherche
+  const [msg, setMsg] = useState(null);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  // Saisie
+  const [immeuble, setImmeuble] = useState("nimy");
+  const [logement, setLogement] = useState("");
+  const [locataire, setLocataire] = useState("");
+  const [annee, setAnnee] = useState(String(new Date().getFullYear()));
+  const [garantieMontant, setGarantieMontant] = useState("");
+  const [garantieForme, setGarantieForme] = useState("Liquide");
+  const [garantieCommentaire, setGarantieCommentaire] = useState("");
+  const [decompte, setDecompte] = useState("");
+  const [degats, setDegats] = useState("");
+
+  // Recherche
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [savedRecords, setSavedRecords] = useState([]);
+
+  // Charger les enregistrements sauvegardés depuis localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("remboursements");
+      if (saved) setSavedRecords(JSON.parse(saved));
+    } catch (e) {}
+  }, []);
+
+  const avecDecompte = IMMEUBLES_AVEC_DECOMPTE.includes(immeuble);
+
+  // Calcul du total
+  const calcTotal = () => {
+    const g = parseFloat(garantieMontant) || 0;
+    const d = avecDecompte ? (parseFloat(decompte) || 0) : 0;
+    const dg = -(Math.abs(parseFloat(degats) || 0));
+    return g + d + dg;
+  };
+  const total = calcTotal();
+
+  // Préremplir depuis Excel quand immeuble/logement change
+  useEffect(() => {
+    if (!logement) return;
+    const logUpper = logement.toUpperCase();
+    const immUpper = immeuble.toUpperCase();
+    const found = GARANTIES_EXCEL.find(g => {
+      const localU = g.local.toUpperCase();
+      return g.immeuble === immeuble &&
+        (localU.includes(logUpper.replace(/\s+/g, " ")) || logUpper.includes(localU.replace(/GUIRLANDE|NIMY|BICHE|PTG/g, "").trim()));
+    });
+    if (found) {
+      setGarantieMontant(String(found.montant));
+      setGarantieForme(found.forme.charAt(0).toUpperCase() + found.forme.slice(1).replace("liquide", "Liquide"));
+      if (!locataire) setLocataire(found.locataire);
+    }
+  }, [logement, immeuble]);
+
+  const flash = (type, text) => {
+    setMsg({ type, text });
+    setTimeout(() => setMsg(null), 5000);
+  };
+
+  const handleCalculer = () => {
+    if (!logement || !locataire || !garantieMontant) {
+      flash("err", "Veuillez remplir le logement, le locataire et la garantie.");
+      return;
+    }
+    setShowConfirm(true);
+  };
+
+  const handleSauvegarder = async () => {
+    if (!logement || !locataire || !garantieMontant) {
+      flash("err", "Veuillez remplir au minimum le logement, le locataire et la garantie.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const record = {
+        id: Date.now(),
+        annee, immeuble, logement, locataire,
+        garantieMontant: parseFloat(garantieMontant) || 0,
+        garantieForme, garantieCommentaire,
+        decompte: avecDecompte ? (parseFloat(decompte) || 0) : null,
+        degats: -(Math.abs(parseFloat(degats) || 0)),
+        total,
+        avecDecompte,
+        date: new Date().toISOString()
+      };
+
+      // Sauvegarder en localStorage
+      const updated = [...savedRecords.filter(r => !(r.immeuble === immeuble && r.logement === logement && r.annee === annee)), record];
+      setSavedRecords(updated);
+      localStorage.setItem("remboursements", JSON.stringify(updated));
+
+      // Générer le Word
+      const blob = await buildRemboursementDocx(record);
+      const reader = new FileReader();
+      const base64 = await new Promise((res, rej) => {
+        reader.onload = () => res(reader.result.split(",")[1]);
+        reader.onerror = rej;
+        reader.readAsDataURL(blob);
+      });
+
+      const folderPath = `${annee}/${cleanStr(immeuble)}/${cleanStr(logement)}`;
+      const filename = `Remboursement_${cleanStr(immeuble)}_${cleanStr(logement)}_${cleanStr(locataire)}_${annee}.docx`;
+
+      const response = await fetch(WEBHOOK, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save_remboursement", folderPath, filename, data: base64 })
+      });
+
+      if (response.ok) {
+        flash("ok", `✓ Sauvegardé dans OneDrive — Remboursements/${folderPath}/`);
+      } else {
+        flash("err", "Erreur Make.com : " + response.status + " — sauvegardé localement");
+      }
+    } catch (e) {
+      flash("err", "Erreur : " + e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRecherche = () => {
+    if (!searchQuery.trim()) {
+      setSearchResults(savedRecords);
+      return;
+    }
+    const q = searchQuery.toLowerCase();
+    setSearchResults(savedRecords.filter(r =>
+      r.locataire?.toLowerCase().includes(q) ||
+      r.logement?.toLowerCase().includes(q) ||
+      r.immeuble?.toLowerCase().includes(q)
+    ));
+  };
+
+  const loadRecord = (r) => {
+    setImmeuble(r.immeuble);
+    setLogement(r.logement);
+    setLocataire(r.locataire);
+    setAnnee(r.annee);
+    setGarantieMontant(String(r.garantieMontant));
+    setGarantieForme(r.garantieForme);
+    setGarantieCommentaire(r.garantieCommentaire || "");
+    setDecompte(r.decompte !== null ? String(r.decompte) : "");
+    setDegats(String(Math.abs(r.degats || 0)));
+    setTab("saisie");
+  };
+
+  const immBadge = (imm) => {
+    if (imm === "biche") return "badge-biche";
+    if (imm === "nimy") return "badge-nimy";
+    if (imm === "ptg") return "badge-ptg";
+    return "badge-other";
+  };
+
+  const totalClass = total > 0 ? "total-positive" : total < 0 ? "total-negative" : "total-zero";
+
+  return (
+    <div className="app">
+      {showConfirm && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <h2>✅ Confirmation</h2>
+            <p>Le décompte a-t-il été calculé ?</p>
+            <button className="btn btn-primary" onClick={() => setShowConfirm(false)}>
+              Oui, fermer
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="header">
+        <h1>💶 Remboursements</h1>
+        <p>Calcul des remboursements de garantie locative</p>
+      </div>
+
+      {msg && <div className={`msg ${msg.type === "ok" ? "msg-ok" : "msg-err"}`}>{msg.text}</div>}
+
+      <div className="tab-bar">
+        <button className={`tab ${tab === "saisie" ? "active" : ""}`} onClick={() => setTab("saisie")}>✏️ Saisie</button>
+        <button className={`tab ${tab === "recherche" ? "active" : ""}`} onClick={() => setTab("recherche")}>🔍 Recherche</button>
+      </div>
+
+      {tab === "saisie" && (
+        <>
+          <div className="card">
+            <div className="card-title">Identification</div>
+            <div className="field-row">
+              <div className="field">
+                <label>Immeuble</label>
+                <select value={immeuble} onChange={e => { setImmeuble(e.target.value); setLogement(""); setLocataire(""); }}>
+                  <option value="biche">Biche</option>
+                  <option value="nimy">Nimy</option>
+                  <option value="ptg">Petite Guirlande (PTG)</option>
+                  <option value="havre">Havre</option>
+                  <option value="vannes">Vannes</option>
+                  <option value="fermette">La Fermette</option>
+                  <option value="egmont">Egmont</option>
+                </select>
+              </div>
+              <div className="field">
+                <label>Année</label>
+                <input type="text" value={annee} onChange={e => setAnnee(e.target.value)} placeholder="2026"/>
+              </div>
+            </div>
+            <div className="field">
+              <label>Logement</label>
+              <input type="text" value={logement} onChange={e => setLogement(e.target.value)} placeholder="Studio 1, Appartement..."/>
+            </div>
+            <div className="field">
+              <label>Locataire</label>
+              <input type="text" value={locataire} onChange={e => setLocataire(e.target.value)} placeholder="Nom du locataire"/>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-title">1. Garantie locative</div>
+            <div className="field-row">
+              <div className="field">
+                <label>Montant (€)</label>
+                <input type="number" value={garantieMontant} onChange={e => setGarantieMontant(e.target.value)} placeholder="0" min="0" step="0.01"/>
+              </div>
+              <div className="field">
+                <label>Nature</label>
+                <select value={garantieForme} onChange={e => setGarantieForme(e.target.value)}>
+                  {FORMES_GARANTIE.map(f => <option key={f} value={f}>{f}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="field">
+              <label>Commentaire</label>
+              <textarea value={garantieCommentaire} onChange={e => setGarantieCommentaire(e.target.value)} placeholder="Remarques, références..."/>
+            </div>
+          </div>
+
+          {avecDecompte && (
+            <div className="card">
+              <div className="card-title">2. Résultat du décompte de charges</div>
+              <div className="field">
+                <label>Montant (€) — positif si remboursement, négatif si solde dû</label>
+                <input type="number" value={decompte} onChange={e => setDecompte(e.target.value)} placeholder="0" step="0.01"/>
+              </div>
+            </div>
+          )}
+
+          <div className="card">
+            <div className="card-title">{avecDecompte ? "3." : "2."} Dégâts locatifs</div>
+            <div className="field">
+              <label>Montant (€) — toujours positif, sera déduit automatiquement</label>
+              <input type="number" value={degats} onChange={e => setDegats(e.target.value.replace("-", ""))} placeholder="0" min="0" step="0.01"/>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-title">{avecDecompte ? "4." : "3."} Total</div>
+            <div style={{ fontSize: 13, color: "#555", marginBottom: 8 }}>
+              {garantieMontant ? `Garantie : +${parseFloat(garantieMontant)||0} €` : ""}
+              {avecDecompte && decompte ? ` | Décompte : ${parseFloat(decompte)||0} €` : ""}
+              {degats ? ` | Dégâts : -${Math.abs(parseFloat(degats)||0)} €` : ""}
+            </div>
+            <div className="total-box">
+              <div className="label">{total >= 0 ? "💰 Remboursement au locataire" : "⚠️ Solde dû par le locataire"}</div>
+              <div className={`amount ${totalClass}`}>{total >= 0 ? "+" : ""}{total.toFixed(2).replace(".", ",")} €</div>
+            </div>
+          </div>
+
+          <button className="btn btn-orange" onClick={handleCalculer}>
+            ✅ Le décompte a-t-il été calculé ?
+          </button>
+          <button className="btn btn-green" onClick={handleSauvegarder} disabled={busy}>
+            {busy ? "⏳ Sauvegarde..." : "☁️ Sauvegarder sur OneDrive"}
+          </button>
+        </>
+      )}
+
+      {tab === "recherche" && (
+        <div className="card">
+          <div className="card-title">Rechercher un remboursement</div>
+          <div className="field">
+            <label>Locataire, logement ou immeuble</label>
+            <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && handleRecherche()} placeholder="Rechercher..."/>
+          </div>
+          <button className="btn btn-primary" onClick={handleRecherche}>🔍 Rechercher</button>
+          <div className="search-results">
+            {searchResults.length === 0 && searchQuery && <div style={{ color: "#888", fontSize: 13, textAlign: "center", padding: 16 }}>Aucun résultat</div>}
+            {searchResults.map(r => (
+              <div key={r.id} className="search-result-item" onClick={() => loadRecord(r)}>
+                <div className="name">
+                  <span className={`badge ${immBadge(r.immeuble)}`}>{r.immeuble.toUpperCase()}</span>
+                  {" "}{r.logement} — {r.locataire}
+                </div>
+                <div className="sub">
+                  {r.annee} | Garantie : {r.garantieMontant} € | Total : {r.total >= 0 ? "+" : ""}{r.total?.toFixed(2)} €
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
