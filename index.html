@@ -1287,7 +1287,13 @@ function BuildingsView({ data, setData, building }) {
 function UnitCard({ unit, onUpdate, onTenantChange }) {
   const [open, setOpen] = useState(false);
   const [newTenant, setNewTenant] = useState("");
+  const [localTenant, setLocalTenant] = React.useState(unit.tenant ?? "");
+  const [localProvision, setLocalProvision] = React.useState(unit.provisionMonthly ?? "");
   const history = unit.history || [];
+
+  // Sync local state when unit changes (e.g. after OneDrive load)
+  React.useEffect(() => { setLocalTenant(unit.tenant ?? ""); }, [unit.tenant]);
+  React.useEffect(() => { setLocalProvision(unit.provisionMonthly ?? ""); }, [unit.provisionMonthly]);
 
   return (
     <div className="card">
@@ -1302,11 +1308,11 @@ function UnitCard({ unit, onUpdate, onTenantChange }) {
         <div style={{ marginTop: 12 }}>
           <div style={{ marginBottom: 10 }}>
             <span className="label">Locataire actuel</span>
-            <input value={unit.tenant ?? ""} onChange={e => onUpdate({ tenant: e.target.value })} placeholder="Nom du locataire" />
+            <input value={localTenant} onChange={e => setLocalTenant(e.target.value)} onBlur={e => onUpdate({ tenant: e.target.value })} placeholder="Nom du locataire" />
           </div>
           <div style={{ marginBottom: 10 }}>
             <span className="label">Provision mensuelle (€)</span>
-            <input type="number" step="0.01" value={unit.provisionMonthly ?? ""} onChange={e => onUpdate({ provisionMonthly: parseFloat(e.target.value) || 0 })} />
+            <input type="number" step="0.01" value={localProvision} onChange={e => setLocalProvision(e.target.value)} onBlur={e => onUpdate({ provisionMonthly: parseFloat(e.target.value) || 0 })} />
           </div>
 
           <div style={{ marginTop: 8 }}>
