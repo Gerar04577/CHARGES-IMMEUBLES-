@@ -918,6 +918,8 @@ function App() {
   );
 }
 
+const APP_VERSION = "v3";
+
 function TopBar({ tab }) {
   const titles = {
     dashboard: "Charges & Compteurs",
@@ -929,7 +931,7 @@ function TopBar({ tab }) {
   return (
     <div className="topbar">
       <div className="display" style={{ fontSize: 20, fontWeight: 700 }}>{titles[tab]}</div>
-      <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2 }}>Biche · Nimy · Petite Guirlande</div>
+      <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2 }}>Biche · Nimy · Petite Guirlande · {APP_VERSION}</div>
     </div>
   );
 }
@@ -1002,6 +1004,30 @@ function SyncStatusBadge() {
   }
   return <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>☁️ Sauvegarde automatique pas encore effectuée</div>;
 }
+
+/* ============================================================
+   AJUSTEMENTS DE PROVISION (par logement ET par periode de decompte)
+   Stockes dans data.ajustementsProvision. Ne touchent JAMAIS
+   unit.provisionMonthly, qui reste une donnee de bail.
+   ============================================================ */
+const cleAjustement = (building, unitId, from, to) => `${building}|${unitId}|${from}|${to}`;
+
+// Analyse d'une saisie numerique tapee a la main.
+// On n'utilise PAS <input type="number"> : la spec HTML impose que la valeur
+// soit remise a la chaine vide des qu'elle n'est pas un nombre flottant valide
+// (etats intermediaires comme "1." compris), ce qui rend impossible de
+// distinguer "champ vide" de "saisie invalide" et provoquerait un
+// enregistrement silencieux de 0. On lit donc du texte et on valide nous-memes.
+// La virgule est acceptee (clavier decimal francais).
+const analyserNombre = (txt) => {
+  const brut = String(txt).trim().replace(",", ".");
+  if (brut === "") return { vide: true, valide: false, valeur: null };
+  if (!/^-?\d*\.?\d*$/.test(brut)) return { vide: false, valide: false, valeur: null };
+  const v = parseFloat(brut);
+  if (isNaN(v)) return { vide: false, valide: false, valeur: null };
+  return { vide: false, valide: true, valeur: v };
+};
+const lireAjustement = (data, cle) => (data.ajustementsProvision && data.ajustementsProvision[cle]) || {};
 
 /* ============================================================
    BACKUP / SYNC (export & import full dataset as JSON, e.g. via OneDrive)
@@ -1936,7 +1962,10 @@ function DecomptesView({ data, setData, building }) {
   // (e.g. RDC Commercial / privateMeterOnly).
   const [mazoutCost, setMazoutCost] = useState(0);
   const [istaCost, setIstaCost] = useState(0);
-  const [provisionOverride, setProvisionOverride] = useState(null);
+  const [moisNonPayesTexte, setMoisNonPayesTexte] = useState(null);
+  const [provisionTexte, setProvisionTexte] = useState(null);
+  const [erreurProvision, setErreurProvision] = useState(null);
+  const [erreurMoisNonPayes, setErreurMoisNonPayes] = useState(null);
   const [elecConsoOverride, setElecConsoOverride] = useState(null);
   const [eauConsoOverride, setEauConsoOverride] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -2065,7 +2094,30 @@ function DecomptesView({ data, setData, building }) {
   const months = days / 30.44; // gardé pour compatibilité affichage
   const monthsDisplay = Math.round(months * 10) / 10;
   const provisionMonths = countMonthsWithFirst(periodFrom, periodTo);
-  const provision = provisionOverride !== null ? provisionOverride : Math.round((unit.provisionMonthly || 0) * provisionMonths * 100) / 100;
+
+  // Ajustements enregistres pour CE logement et CETTE periode.
+  const cleAjust = cleAjustement(building, unitId, periodFrom, periodTo);
+  const ajust = lireAjustement(data, cleAjust);
+  const moisNonPayes = ajust.moisNonPayes || 0;
+  const provisionForcee = (ajust.provisionForcee === undefined || ajust.provisionForcee === null) ? null : ajust.provisionForcee;
+  const moisFactures = Math.max(provisionMonths - moisNonPayes, 0);
+
+  // Une seule source s'applique a la fois : le montant force a le dernier mot,
+  // sinon le calcul provision mensuelle x mois reellement dus.
+  const provision = provisionForcee !== null
+    ? provisionForcee
+    : Math.round((unit.provisionMonthly || 0) * moisFactures * 100) / 100;
+
+  // Ecriture des ajustements dans les donnees. N'ecrit JAMAIS dans unit.
+  const majAjustement = (patch) => {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.ajustementsProvision) next.ajustementsProvision = {};
+      const actuel = next.ajustementsProvision[cleAjust] || {};
+      next.ajustementsProvision[cleAjust] = { ...actuel, ...patch };
+      return next;
+    });
+  };
 
   // Cleaning fee: 10 EUR per whole month (a month started counts in full,
   // even for a tenant leaving early in the month) — distinct from the
@@ -2107,6 +2159,7 @@ function DecomptesView({ data, setData, building }) {
         elec: { conso: elecConso, cost: elecCost, days },
         eau: { conso: eauConso, cost: eauCost, days },
         total, provision, diff, days, createdAt: todayISO(),
+        moisPeriode: provisionMonths, moisNonPayes, provisionForcee,
       });
       return next;
     });
@@ -2163,7 +2216,7 @@ function DecomptesView({ data, setData, building }) {
     <div>
       <div className="card">
         <span className="label">Logement</span>
-        <select value={unitId} onChange={e => { setUnitId(e.target.value); setProvisionOverride(null); setElecConsoOverride(null); setEauConsoOverride(null); setMazoutCost(0); setIstaCost(0); setPeriodFromOverride(null); setPeriodToOverride(null); }}>
+        <select value={unitId} onChange={e => { setUnitId(e.target.value); setMoisNonPayesTexte(null); setErreurMoisNonPayes(null); setProvisionTexte(null); setErreurProvision(null); setElecConsoOverride(null); setEauConsoOverride(null); setMazoutCost(0); setIstaCost(0); setPeriodFromOverride(null); setPeriodToOverride(null); }}>
           {b.units.map(u => <option key={u.id} value={u.id}>{u.name} — {u.tenant || "Vacant"}</option>)}
         </select>
       </div>
@@ -2264,8 +2317,60 @@ function DecomptesView({ data, setData, building }) {
         )}
 
         <div style={{ marginTop: 12 }}>
-          <span className="label">Provision de charges (≈ {fmtNum(monthsDisplay, 1)} mois × {fmtEUR(unit.provisionMonthly)})</span>
-          <input type="number" step="0.01" value={provision || ""} placeholder="0" onChange={e => setProvisionOverride(parseFloat(e.target.value) || 0)} />
+          <span className="label">Provision de charges</span>
+          <input type="text" inputMode="decimal" placeholder="0"
+            value={provisionTexte !== null ? provisionTexte : (provision || "")}
+            onChange={e => {
+              const txt = e.target.value;
+              setProvisionTexte(txt);
+              const r = analyserNombre(txt);
+              if (r.vide) { setErreurProvision(null); setProvisionTexte(null); majAjustement({ provisionForcee: null }); return; }
+              if (!r.valide) { setErreurProvision("Montant invalide."); return; }
+              if (r.valeur < 0) { setErreurProvision("Le montant ne peut pas être négatif."); return; }
+              setErreurProvision(null);
+              majAjustement({ provisionForcee: r.valeur });
+            }} />
+          {erreurProvision && (
+            <div style={{ fontSize: 12, color: "#b91c1c", marginTop: 4, fontWeight: 600 }}>{erreurProvision}</div>
+          )}
+          {provisionForcee !== null ? (
+            <div style={{ fontSize: 12, color: ACCENT, marginTop: 4 }}>
+              Montant forcé —{" "}
+              <button className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }}
+                onClick={() => { setProvisionTexte(null); setErreurProvision(null); majAjustement({ provisionForcee: null }); }}>rétablir le calcul</button>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: MUTED, marginTop: 4 }}>
+              {provisionMonths} mois{moisNonPayes > 0 ? ` − ${fmtNum(moisNonPayes, 1)} non payé(s)` : ""} = {fmtNum(moisFactures, 1)} × {fmtEUR(unit.provisionMonthly)} = <b>{fmtEUR(provision)}</b>
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <span className="label">Mois non payés (demi-mois autorisés)</span>
+          <input type="text" inputMode="decimal" placeholder="0"
+            disabled={provisionForcee !== null}
+            value={moisNonPayesTexte !== null ? moisNonPayesTexte : (moisNonPayes || "")}
+            onChange={e => {
+              const txt = e.target.value;
+              setMoisNonPayesTexte(txt);
+              const r = analyserNombre(txt);
+              if (r.vide) { setErreurMoisNonPayes(null); majAjustement({ moisNonPayes: 0 }); return; }
+              if (!r.valide) { setErreurMoisNonPayes("Valeur invalide."); return; }
+              if (r.valeur < 0) { setErreurMoisNonPayes("Le nombre de mois ne peut pas être négatif."); return; }
+              if (Math.round(r.valeur * 2) !== r.valeur * 2) { setErreurMoisNonPayes("Uniquement des demi-mois : 0 · 0,5 · 1 · 1,5 · 2…"); return; }
+              if (r.valeur > provisionMonths) { setErreurMoisNonPayes(`La période ne compte que ${provisionMonths} mois.`); return; }
+              setErreurMoisNonPayes(null);
+              majAjustement({ moisNonPayes: r.valeur });
+            }} />
+          {erreurMoisNonPayes && (
+            <div style={{ fontSize: 12, color: "#b91c1c", marginTop: 4, fontWeight: 600 }}>{erreurMoisNonPayes}</div>
+          )}
+          {provisionForcee !== null && (
+            <div style={{ fontSize: 12, color: MUTED, marginTop: 4 }}>
+              Sans effet tant qu'un montant est forcé ci-dessus.
+            </div>
+          )}
         </div>
 
         <div className="card" style={{ marginTop: 12, background: PAPER, border: "none" }}>
