@@ -832,6 +832,7 @@ function App() {
               // un import n'est pas une modification : ne pas declencher
               // "modifications en attente" juste apres un Réessayer reussi
               isInitialLoad.current = true;
+              definirSnapshotOneDrive(parsed); // reference pour detecter un conflit plus tard
               setData(parsed);
               await window.storage.set("charges-data", JSON.stringify(parsed)).catch(() => {});
               effacerEchecSync();
@@ -878,8 +879,8 @@ function App() {
   const declencheursInstalles = React.useRef(false);
   useEffect(() => {
     if (!loaded || declencheursInstalles.current) return;
-    declencheursInstalles.current = true; // sinon chaque Réessayer ajoute un minuteur de plus
-    initBackgroundSyncTriggers(() => dataRef.current);
+    declencheursInstalles.current = true; // installe une seule fois
+    initRappelsSauvegarde();
   }, [loaded]);
 
   if (blocage) {
@@ -964,7 +965,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v8";
+const APP_VERSION = "v9";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1036,8 +1037,9 @@ function AideView() {
         </Regle>
 
         <Regle ton="danger" titre="2. Ne jamais travailler à deux en même temps">
-          Si papa et toi modifiez chacun de votre côté, le dernier qui enregistre écrase l'autre,
-          sans aucun avertissement. Prévenez-vous avant d'ouvrir l'application.
+          Depuis la v9, l'application détecte ce cas et <b>refuse</b> d'écraser le travail de l'autre :
+          elle affiche « ⚠️ CONFLIT DÉTECTÉ ». Mais celui qui se fait bloquer perd ce qu'il venait de saisir.
+          Prévenez-vous avant d'ouvrir l'application.
         </Regle>
 
         <Regle ton="danger" titre="3. Ne jamais ignorer un bandeau rouge">
@@ -1047,14 +1049,14 @@ function AideView() {
         </Regle>
 
         <Regle ton="danger" titre="4. Ne jamais fermer l'application juste après avoir saisi">
-          Quand tu tapes une valeur, elle est d'abord gardée <b>dans l'appareil</b>. Elle ne part vers
-          OneDrive qu'un peu plus tard, pas à l'instant même. Si tu fermes entre les deux, ta saisie
-          n'existe que sur cet appareil — et le prochain chargement l'effacera.
+          Quand tu tapes une valeur, elle est gardée <b>dans l'appareil</b> et <b>rien ne part tout seul</b>.
+          Tant que tu n'as pas appuyé sur le bouton d'enregistrement, ta saisie n'existe que sur cet
+          appareil — et le prochain chargement l'effacera.
           <div style={{ marginTop: 8, background: "#fff", borderRadius: 8, padding: "8px 10px" }}>
             <div style={{ fontWeight: 700, marginBottom: 4 }}>La vérification, en 2 secondes :</div>
             Va sur l'onglet <b>Accueil</b> et lis la ligne tout en haut de « Sauvegarde &amp; synchronisation ».
             <div style={{ marginTop: 6 }}>
-              ⏳ <b>« Modifications en attente »</b> → <span style={{ color: "#b91c1c", fontWeight: 700 }}>NE FERME PAS.</span> Rien n'est parti.
+              ⏳ <b>« Modifications NON enregistrées »</b> → <span style={{ color: "#b91c1c", fontWeight: 700 }}>NE FERME PAS.</span> Rien n'est parti.
             </div>
             <div style={{ marginTop: 4 }}>
               ☁️ <b>« Sauvegardé automatiquement le … »</b> → regarde l'heure. Si elle correspond à ta saisie, tu peux fermer.
@@ -1064,14 +1066,17 @@ function AideView() {
             </div>
           </div>
           <div style={{ marginTop: 8 }}>
-            <b>Le plus simple :</b> après avoir saisi, appuie toi-même sur « ☁️ Sauvegarde automatique OneDrive »
-            et attends le message vert « ✓ Sauvegarde automatique OneDrive réussie ». N'attends pas que ça se fasse tout seul.
+            <b>La seule bonne habitude :</b> après avoir saisi, appuie sur « ☁️ Sauvegarde automatique OneDrive »
+            et attends le message vert « ✓ Sauvegarde automatique OneDrive réussie ». Si tu tentes de fermer sans
+            avoir enregistré, le navigateur t'avertira — mais ne compte pas dessus sur téléphone, il ne prévient pas toujours.
           </div>
         </Regle>
 
-        <Regle ton="danger" titre="5. Ne jamais laisser un vieil onglet ouvert sur un autre appareil">
-          Un onglet resté ouvert continue d'envoyer sa version toutes les 5 minutes.
-          Ferme l'application partout ailleurs avant de commencer à travailler.
+        <Regle ton="danger" titre="5. Ne jamais reprendre une session laissée ouverte depuis longtemps">
+          Une application restée ouverte affiche les données telles qu'elles étaient à son ouverture.
+          Si quelqu'un a enregistré entre-temps, tu travaillerais sur une version dépassée.
+          Recharge la page avant de reprendre. L'application refusera de toute façon d'écraser le travail
+          d'un autre : elle affichera « ⚠️ CONFLIT DÉTECTÉ » plutôt que d'enregistrer.
         </Regle>
       </div>
 
@@ -1089,6 +1094,9 @@ function AideView() {
         pour que tu l'enregistres où tu veux (Fichiers, mail…). C'est la copie de secours à faire avant toute manipulation risquée.</p>
         <p><b>Sauvegarde automatique OneDrive</b> — c'est le vrai bouton d'enregistrement. Il envoie les données vers OneDrive.
         À utiliser avant de fermer l'application.</p>
+        <p><b>Avant chaque enregistrement</b>, l'application relit d'abord OneDrive pour vérifier que personne
+        n'a enregistré entre-temps. Si la vérification est impossible (pas de réseau), elle <b>annule</b> la
+        sauvegarde plutôt que d'écrire à l'aveugle.</p>
         <p style={{ marginBottom: 0 }}><b>Importation manuelle (fichier)</b> — recharge une copie de secours. <b>Écrase tout</b> ce qui est
         affiché. À n'utiliser qu'en cas de récupération, jamais par curiosité.</p>
       </Section>
@@ -1165,27 +1173,49 @@ function marquerEchecSync(motif) { try { localStorage.setItem("charges-sync-eche
 function effacerEchecSync() { try { localStorage.removeItem("charges-sync-echec"); } catch (e) {} }
 function getEchecSync() { try { return localStorage.getItem("charges-sync-echec"); } catch (e) { return null; } }
 function getLastSync() { try { return localStorage.getItem("charges-last-sync"); } catch (e) { return null; } }
-function attemptBackgroundSync(getData, reason) {
-  if (!hasPendingSync()) return;
+/* ------------------------------------------------------------
+   DETECTION DE CONFLIT
+   Instantane du fichier tel qu'il etait sur OneDrive au chargement.
+   Avant toute ecriture, on relit OneDrive et on compare : si le contenu a
+   change entre-temps, c'est que quelqu'un d'autre a enregistre, et ecraser
+   ferait disparaitre son travail sans le moindre message.
+   ------------------------------------------------------------ */
+let snapshotOneDrive = null;
+const normaliser = (obj) => JSON.stringify(obj); // compare le contenu, pas la mise en forme
+function definirSnapshotOneDrive(objet) { try { snapshotOneDrive = normaliser(objet); } catch (e) { snapshotOneDrive = null; } }
+
+// Relit le fichier sur OneDrive. Leve une exception si la lecture echoue :
+// l'appelant DOIT alors bloquer plutot que d'ecrire a l'aveugle.
+async function lireOneDriveNormalise() {
+  const controller = new AbortController();
+  const minuteur = setTimeout(() => controller.abort(), 15000);
   try {
-    const data = getData();
-    if (!data) return;
-    const base64 = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
-    fetch(WEBHOOK_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "save", data: base64, filename: "charges-data.json", reason }), keepalive: true })
-      .then(res => {
-        if (res.ok) clearPendingSync();
-        else marquerEchecSync("Réponse Make.com : " + res.status);
-      })
-      .catch(e => marquerEchecSync("Connexion impossible" + (e && e.message ? " (" + e.message + ")" : "")));
-  } catch (e) { marquerEchecSync("Erreur interne"); }
+    const reponse = await fetch(WEBHOOK_URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "import" }), signal: controller.signal,
+    });
+    if (!reponse.ok) throw new Error("Make.com a répondu " + reponse.status);
+    const texte = await reponse.text();
+    const decode = decodeURIComponent(escape(atob(texte.trim())));
+    return normaliser(JSON.parse(decode));
+  } finally {
+    clearTimeout(minuteur);
+  }
 }
-function initBackgroundSyncTriggers(getData) {
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") attemptBackgroundSync(getData, "app-en-arriere-plan");
+
+/* ------------------------------------------------------------
+   PLUS AUCUN ENVOI AUTOMATIQUE (decision du 20/08).
+   L'ancienne synchro d'arriere-plan partait a la fermeture de l'app, au
+   retour du reseau et toutes les 5 minutes — sans jamais pouvoir verifier
+   si quelqu'un d'autre avait enregistre entre-temps. Elle est supprimee :
+   toute ecriture passe desormais par un clic explicite, precede d'une
+   verification de conflit. En contrepartie, on previent a la fermeture
+   quand des modifications ne sont pas enregistrees.
+   ------------------------------------------------------------ */
+function initRappelsSauvegarde() {
+  window.addEventListener("beforeunload", (e) => {
+    if (hasPendingSync()) { e.preventDefault(); e.returnValue = ""; return ""; }
   });
-  window.addEventListener("pagehide", () => attemptBackgroundSync(getData, "app-fermee"));
-  window.addEventListener("online", () => attemptBackgroundSync(getData, "retour-reseau"));
-  setInterval(() => attemptBackgroundSync(getData, "sauvegarde-periodique"), 5 * 60 * 1000);
 }
 
 function SyncStatusBadge({ onReessayer, occupe }) {
@@ -1209,7 +1239,18 @@ function SyncStatusBadge({ onReessayer, occupe }) {
     );
   }
   if (status.pending) {
-    return <div style={{ fontSize: 12, fontWeight: 700, color: ACCENT, marginBottom: 10 }}>⏳ Modifications en attente de sauvegarde automatique</div>;
+    // Depuis la v9, plus rien ne part tout seul : ce message doit donc etre
+    // un vrai avertissement, pas une simple information d'attente.
+    return (
+      <div style={{ background: "#fdf3e3", border: "2px solid #b45309", color: "#7c3f06", borderRadius: 10, padding: "10px 12px", marginBottom: 10, fontSize: 13.5, lineHeight: 1.5 }}>
+        <div style={{ fontWeight: 800 }}>⏳ Modifications NON enregistrées</div>
+        <div style={{ marginTop: 4 }}>Rien ne part tout seul. Appuie sur « Sauvegarde automatique OneDrive » avant de fermer.</div>
+        <button onClick={onReessayer} disabled={occupe}
+          style={{ background: "#b45309", color: "#fff", border: "none", borderRadius: 10, padding: "12px 20px", cursor: occupe ? "default" : "pointer", fontWeight: 800, fontSize: 15, width: "100%", marginTop: 8, opacity: occupe ? 0.6 : 1 }}>
+          {occupe ? "Envoi en cours…" : "☁️ Enregistrer maintenant"}
+        </button>
+      </div>
+    );
   }
   if (status.lastSync) {
     const d = new Date(status.lastSync);
@@ -1249,6 +1290,7 @@ const lireAjustement = (data, cle) => (data.ajustementsProvision && data.ajustem
 function BackupBar({ data, setData }) {
   const [msg, setMsg] = useState(null); // { type: "ok"|"err", text }
   const [busy, setBusy] = useState(false);
+  const [conflit, setConflit] = useState(false);
   const fileInputRef = useRef(null);
 
   const flash = (type, text) => {
@@ -1288,6 +1330,25 @@ function BackupBar({ data, setData }) {
   const syncOneDrive = async () => {
     setBusy(true);
     try {
+      // --- verification de conflit, AVANT toute ecriture ---
+      let contenuActuel;
+      try {
+        contenuActuel = await lireOneDriveNormalise();
+      } catch (e) {
+        // Si la verification elle-meme echoue, on NE SAUVEGARDE PAS : ecrire
+        // sans avoir pu comparer, c'est risquer d'ecraser un travail inconnu.
+        marquerEchecSync("Vérification impossible avant sauvegarde (" + e.message + ")");
+        flash("err", "Sauvegarde annulée : impossible de vérifier OneDrive.");
+        setBusy(false);
+        return;
+      }
+      if (snapshotOneDrive !== null && contenuActuel !== snapshotOneDrive) {
+        setConflit(true);
+        flash("err", "Sauvegarde bloquée — conflit détecté.");
+        setBusy(false);
+        return;
+      }
+
       const json = JSON.stringify(data, null, 2);
       const base64 = btoa(unescape(encodeURIComponent(json)));
       const response = await fetch("https://hook.eu1.make.com/pya67pi1a9tsccwgssa7pieib9wa5438", {
@@ -1296,6 +1357,7 @@ function BackupBar({ data, setData }) {
         body: JSON.stringify({ action: "save", data: base64, filename: "charges-data.json" })
       });
       if (response.ok) {
+        definirSnapshotOneDrive(data); // notre propre envoi devient la nouvelle reference
         clearPendingSync();
         flash("ok", "✓ Sauvegarde automatique OneDrive réussie");
       } else {
@@ -1335,6 +1397,21 @@ function BackupBar({ data, setData }) {
   return (
     <div className="card">
       <div style={{ fontWeight: 700, marginBottom: 8 }}>Sauvegarde & synchronisation</div>
+      {conflit && (
+        <div style={{ background: "#b91c1c", color: "#fff", borderRadius: 10, padding: "12px 14px", marginBottom: 10, fontSize: 13.5, lineHeight: 1.5 }}>
+          <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 6 }}>⚠️ CONFLIT DÉTECTÉ</div>
+          Quelqu'un d'autre a enregistré sur OneDrive depuis que tu as ouvert l'application.
+          <div style={{ fontWeight: 800, marginTop: 6 }}>Sauvegarder maintenant écraserait son travail.</div>
+          <div style={{ marginTop: 6 }}>
+            Note d'abord ce que tu viens de saisir, ou exporte-le avec « Sauvegarde manuelle OneDrive » —
+            recharger fera perdre tes modifications non enregistrées.
+          </div>
+          <button onClick={() => window.location.reload()}
+            style={{ background: "#fff", color: "#b91c1c", border: "none", borderRadius: 10, padding: "12px 20px", cursor: "pointer", fontWeight: 800, fontSize: 15, width: "100%", marginTop: 10 }}>
+            🔄 Recharger la version à jour
+          </button>
+        </div>
+      )}
       <SyncStatusBadge onReessayer={syncOneDrive} occupe={busy} />
       <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>
         <b>Sauvegarde manuelle</b> : exporte le fichier via la feuille de partage iOS (OneDrive, etc.).<br/>
