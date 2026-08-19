@@ -974,7 +974,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v10";
+const APP_VERSION = "v11";
 
 function TopBar({ tab }) {
   const titles = {
@@ -2625,11 +2625,20 @@ function DecomptesView({ data, setData, building }) {
               const txt = e.target.value;
               setProvisionTexte(txt);
               const r = analyserNombre(txt);
-              if (r.vide) { setErreurProvision(null); setProvisionTexte(null); majAjustement({ provisionForcee: null }); return; }
+              // Champ vidé : on retire le montant forcé, MAIS on garde le texte
+              // vide affiché. Remettre provisionTexte à null ferait réapparaître
+              // aussitôt la valeur calculée, rendant impossible d'effacer le
+              // dernier chiffre (défaut signalé sur la v10).
+              if (r.vide) { setErreurProvision(null); majAjustement({ provisionForcee: null }); return; }
               if (!r.valide) { setErreurProvision("Montant invalide."); return; }
               if (r.valeur < 0) { setErreurProvision("Le montant ne peut pas être négatif."); return; }
               setErreurProvision(null);
               majAjustement({ provisionForcee: r.valeur });
+            }}
+            onBlur={() => {
+              // En quittant le champ laissé vide, on rend la main au calcul
+              // automatique : la valeur calculée réapparaît.
+              if (provisionTexte !== null && analyserNombre(provisionTexte).vide) setProvisionTexte(null);
             }} />
           {erreurProvision && (
             <div style={{ fontSize: 12, color: "#b91c1c", marginTop: 4, fontWeight: 600 }}>{erreurProvision}</div>
