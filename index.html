@@ -77,6 +77,7 @@ function Droplet(p) { return <Icon {...p}><path d="M12 2.7 17.7 8.4a8 8 0 1 1-11
 function Flame(p) { return <Icon {...p}><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" /></Icon>; }
 function ArrowLeft(p) { return <Icon {...p}><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></Icon>; }
 function HistoryIcon(p) { return <Icon {...p}><path d="M3 12a9 9 0 1 0 2.64-6.36L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l4 2" /></Icon>; }
+function HelpCircle(p) { return <Icon {...p}><circle cx="12" cy="12" r="10" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" /></Icon>; }
 function UserPlus(p) { return <Icon {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" /></Icon>; }
 
 /* ---- minimal inline SVG line chart (replaces recharts) ---- */
@@ -389,11 +390,12 @@ const GlobalStyle = () => (
       position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
       width: 100%; max-width: 480px; background: ${CARD};
       border-top: 1px solid ${LINE}; display: flex; justify-content: space-around;
-      padding: 8px 4px calc(8px + env(safe-area-inset-bottom)) 4px; z-index: 50;
+      padding: 8px 2px calc(8px + env(safe-area-inset-bottom)) 2px; z-index: 50;
     }
     .navbtn {
       display: flex; flex-direction: column; align-items: center; gap: 2px;
-      background: none; border: none; color: ${MUTED}; font-size: 11px; padding: 4px 8px; border-radius: 8px;
+      background: none; border: none; color: ${MUTED}; font-size: 10px; padding: 4px 2px; border-radius: 8px;
+      flex: 1 1 0; min-width: 0; white-space: nowrap;
     }
     .navbtn.active { color: ${INK}; font-weight: 700; }
     .topbar {
@@ -955,13 +957,14 @@ function App() {
         {tab === "meters" && <MetersView data={data} setData={setData} building={building} />}
         {tab === "decomptes" && <DecomptesView data={data} setData={setData} building={building} />}
         {tab === "search" && <SearchView data={data} onGo={(b, t) => { setBuilding(b); setTab(t); }} />}
+        {tab === "aide" && <AideView />}
       </div>
       <BottomNav tab={tab} setTab={setTab} />
     </div>
   );
 }
 
-const APP_VERSION = "v6";
+const APP_VERSION = "v8";
 
 function TopBar({ tab }) {
   const titles = {
@@ -970,11 +973,156 @@ function TopBar({ tab }) {
     meters: "Compteurs & Relevés",
     decomptes: "Décomptes annuels",
     search: "Recherche",
+    aide: "Mode d'emploi",
   };
   return (
     <div className="topbar">
       <div className="display" style={{ fontSize: 20, fontWeight: 700 }}>{titles[tab]}</div>
       <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2 }}>Biche · Nimy · Petite Guirlande · {APP_VERSION}</div>
+    </div>
+  );
+}
+
+/* ============================================================
+   MODE D'EMPLOI
+   ============================================================ */
+function Regle({ ton, titre, children }) {
+  const couleurs = {
+    danger: { fond: "#fdeaea", bord: "#b91c1c", texte: "#7f1d1d" },
+    attention: { fond: "#fdf3e3", bord: "#b45309", texte: "#7c3f06" },
+    ok: { fond: "#eaf3ec", bord: "#2e7d4f", texte: "#1e5233" },
+  }[ton];
+  return (
+    <div style={{ background: couleurs.fond, borderLeft: `4px solid ${couleurs.bord}`, borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
+      <div style={{ fontWeight: 800, color: couleurs.texte, marginBottom: 4, fontSize: 14 }}>{titre}</div>
+      <div style={{ fontSize: 13.5, lineHeight: 1.55, color: INK }}>{children}</div>
+    </div>
+  );
+}
+
+function Section({ titre, children }) {
+  const [ouvert, setOuvert] = React.useState(false);
+  return (
+    <div className="card" style={{ marginBottom: 10 }}>
+      <div className="between" style={{ cursor: "pointer" }} onClick={() => setOuvert(v => !v)}>
+        <div style={{ fontWeight: 700 }}>{titre}</div>
+        {ouvert ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+      </div>
+      {ouvert && <div style={{ marginTop: 10, fontSize: 13.5, lineHeight: 1.6 }}>{children}</div>}
+    </div>
+  );
+}
+
+function AideView() {
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: 10, background: INK, color: "#fff" }}>
+        <div className="display" style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>À lire avant d'utiliser l'application</div>
+        <div style={{ fontSize: 13.5, lineHeight: 1.6, opacity: 0.95 }}>
+          Toutes les données sont dans <b>un seul fichier</b> sur OneDrive, partagé par tous les appareils.
+          Le dernier qui enregistre écrase ce que les autres avaient enregistré. Les règles ci-dessous
+          existent pour éviter de perdre du travail.
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 10 }}>
+        <div style={{ fontWeight: 800, marginBottom: 10, color: "#b91c1c" }}>⛔ LES 5 ERREURS À NE JAMAIS FAIRE</div>
+
+        <Regle ton="danger" titre="1. Ne jamais toucher au fichier charges-data.json sur OneDrive">
+          Ni le renommer, ni le déplacer, ni le supprimer, ni le remplacer par une autre copie.
+          Le robot Make.com le retrouve grâce à un identifiant interne : dès qu'on y touche,
+          l'identifiant change et l'application ne peut plus lire ni écrire.
+          <b> C'est exactement ce qui a provoqué la panne du 19 août.</b>
+        </Regle>
+
+        <Regle ton="danger" titre="2. Ne jamais travailler à deux en même temps">
+          Si papa et toi modifiez chacun de votre côté, le dernier qui enregistre écrase l'autre,
+          sans aucun avertissement. Prévenez-vous avant d'ouvrir l'application.
+        </Regle>
+
+        <Regle ton="danger" titre="3. Ne jamais ignorer un bandeau rouge">
+          « LA DERNIÈRE SAUVEGARDE A ÉCHOUÉ » veut dire que ton travail n'est <b>pas</b> sur OneDrive.
+          Appuie sur « Réessayer la sauvegarde ». Si ça échoue encore, fais une
+          « Sauvegarde manuelle OneDrive » et enregistre le fichier sur l'appareil avant de fermer.
+        </Regle>
+
+        <Regle ton="danger" titre="4. Ne jamais fermer l'application juste après avoir saisi">
+          Quand tu tapes une valeur, elle est d'abord gardée <b>dans l'appareil</b>. Elle ne part vers
+          OneDrive qu'un peu plus tard, pas à l'instant même. Si tu fermes entre les deux, ta saisie
+          n'existe que sur cet appareil — et le prochain chargement l'effacera.
+          <div style={{ marginTop: 8, background: "#fff", borderRadius: 8, padding: "8px 10px" }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>La vérification, en 2 secondes :</div>
+            Va sur l'onglet <b>Accueil</b> et lis la ligne tout en haut de « Sauvegarde &amp; synchronisation ».
+            <div style={{ marginTop: 6 }}>
+              ⏳ <b>« Modifications en attente »</b> → <span style={{ color: "#b91c1c", fontWeight: 700 }}>NE FERME PAS.</span> Rien n'est parti.
+            </div>
+            <div style={{ marginTop: 4 }}>
+              ☁️ <b>« Sauvegardé automatiquement le … »</b> → regarde l'heure. Si elle correspond à ta saisie, tu peux fermer.
+            </div>
+            <div style={{ marginTop: 4 }}>
+              ⛔ <b>Bandeau rouge</b> → la sauvegarde a échoué, voir la règle 3.
+            </div>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <b>Le plus simple :</b> après avoir saisi, appuie toi-même sur « ☁️ Sauvegarde automatique OneDrive »
+            et attends le message vert « ✓ Sauvegarde automatique OneDrive réussie ». N'attends pas que ça se fasse tout seul.
+          </div>
+        </Regle>
+
+        <Regle ton="danger" titre="5. Ne jamais laisser un vieil onglet ouvert sur un autre appareil">
+          Un onglet resté ouvert continue d'envoyer sa version toutes les 5 minutes.
+          Ferme l'application partout ailleurs avant de commencer à travailler.
+        </Regle>
+      </div>
+
+      <Section titre="Comment démarrer, à chaque fois">
+        <ol style={{ paddingLeft: 18, margin: 0 }}>
+          <li style={{ marginBottom: 6 }}>Ouvre l'application. Elle va chercher les données sur OneDrive toute seule.</li>
+          <li style={{ marginBottom: 6 }}>Attends l'écran <b>vert</b> « Dernière sauvegarde OneDrive chargée ». Il ne s'affiche que si les données sont réellement arrivées.</li>
+          <li style={{ marginBottom: 6 }}>Si tu vois un écran <b>rouge</b> à la place, il n'y a pas de connexion. Rien n'est affiché et rien ne peut être modifié : c'est voulu. Rétablis Internet et appuie sur « Réessayer ».</li>
+          <li>Travaille, puis appuie sur « ☁️ Sauvegarde automatique OneDrive » avant de fermer.</li>
+        </ol>
+      </Section>
+
+      <Section titre="Les trois boutons de sauvegarde, en clair">
+        <p style={{ marginTop: 0 }}><b>Sauvegarde manuelle OneDrive</b> — trompeur : ça n'envoie rien tout seul. Ça sort le fichier
+        pour que tu l'enregistres où tu veux (Fichiers, mail…). C'est la copie de secours à faire avant toute manipulation risquée.</p>
+        <p><b>Sauvegarde automatique OneDrive</b> — c'est le vrai bouton d'enregistrement. Il envoie les données vers OneDrive.
+        À utiliser avant de fermer l'application.</p>
+        <p style={{ marginBottom: 0 }}><b>Importation manuelle (fichier)</b> — recharge une copie de secours. <b>Écrase tout</b> ce qui est
+        affiché. À n'utiliser qu'en cas de récupération, jamais par curiosité.</p>
+      </Section>
+
+      <Section titre="Où saisir quoi">
+        <p style={{ marginTop: 0 }}><b>Immeubles</b> — locataires et provision mensuelle. La provision mensuelle est une donnée du bail :
+        elle ne se modifie que si le bail change, jamais pour corriger un décompte.</p>
+        <p><b>Compteurs</b> — nouveaux relevés et tarifs.</p>
+        <p style={{ marginBottom: 0 }}><b>Décomptes</b> — calcul annuel par logement, et génération du document Word.</p>
+      </Section>
+
+      <Section titre="Le champ « Mois non payés »">
+        <p style={{ marginTop: 0 }}>Dans l'onglet Décomptes, sous la provision. Il sert quand un locataire n'a pas payé toutes ses provisions.</p>
+        <p>Exemple : provision de 100 €/mois sur 12 mois, mais seulement 10 mois payés → saisis <b>2</b>.
+        Le total passe de 1 200 € à 1 000 €.</p>
+        <p>Seuls les demi-mois sont acceptés : 0 · 0,5 · 1 · 1,5 · 2… Une valeur comme 1,3 est refusée avec un message.</p>
+        <p style={{ marginBottom: 0 }}><b>Important :</b> ce champ ne modifie jamais la provision mensuelle du logement.
+        Le locataire doit toujours 100 €/mois — il en a simplement payé moins.</p>
+      </Section>
+
+      <Section titre="Si quelque chose semble anormal">
+        <p style={{ marginTop: 0 }}><b>Les noms de locataires ne sont pas les bons</b> → n'enregistre surtout rien.
+        Ferme l'application et préviens papa. Enregistrer propagerait l'erreur partout.</p>
+        <p><b>Écran rouge au démarrage</b> → pas de connexion, ou le robot Make.com est en panne. Réessaie plus tard.</p>
+        <p style={{ marginBottom: 0 }}><b>Bandeau rouge après une saisie</b> → la sauvegarde a échoué. Réessaie, puis fais une sauvegarde manuelle
+        si ça persiste. Ne ferme pas l'application avant.</p>
+      </Section>
+
+      <div className="card" style={{ background: "transparent", border: "none" }}>
+        <p style={{ fontSize: 12, color: MUTED, lineHeight: 1.5, margin: 0 }}>
+          En cas de doute, la règle est toujours la même : ne rien enregistrer, et demander.
+          Une saisie perdue se refait en dix minutes ; des données écrasées se récupèrent difficilement.
+        </p>
+      </div>
     </div>
   );
 }
@@ -986,6 +1134,7 @@ function BottomNav({ tab, setTab }) {
     { id: "meters", label: "Compteurs", icon: Gauge },
     { id: "decomptes", label: "Décomptes", icon: FileText },
     { id: "search", label: "Recherche", icon: Search },
+    { id: "aide", label: "Mode d'emploi", icon: HelpCircle },
   ];
   return (
     <div className="bottomnav">
