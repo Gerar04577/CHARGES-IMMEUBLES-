@@ -1109,7 +1109,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v13";
+const APP_VERSION = "v14";
 
 function TopBar({ tab }) {
   const titles = {
@@ -2550,64 +2550,6 @@ function DecomptesView({ data, setData, building }) {
     ? provisionForcee
     : Math.round((unit.provisionMonthly || 0) * moisFactures * 100) / 100;
 
-  // --- MODULE REMBOURSEMENT : lecture, ecriture, calcul ---
-  // Stocke dans data.remboursements, rattache au logement ET a la periode,
-  // donc retrouve a la reouverture. Aucune ecriture ni lecture de localStorage.
-  const remb = (data.remboursements && data.remboursements[cleAjust]) || {};
-  const rbDecompte = decompteEffectif(remb, diff);
-  const rbTotal = totalRemboursement(remb, diff);
-
-  const majRemboursement = (patch) => {
-    setData(prev => {
-      const next = JSON.parse(JSON.stringify(prev));
-      if (!next.remboursements) next.remboursements = {};
-      const actuel = next.remboursements[cleAjust] || {};
-      next.remboursements[cleAjust] = { ...actuel, ...patch };
-      return next;
-    });
-  };
-
-  const saisirRemboursement = (champ, txt) => {
-    setRbTextes(prev => ({ ...prev, [champ.cle]: txt }));
-    const r = analyserNombre(txt);
-    if (r.vide) {
-      setRbErreurs(prev => ({ ...prev, [champ.cle]: null }));
-      // Le decompte revient au calcul automatique ; les autres champs valent 0.
-      majRemboursement({ [champ.cle]: champ.cle === "decompte" ? null : 0 });
-      return;
-    }
-    if (!r.valide) { setRbErreurs(prev => ({ ...prev, [champ.cle]: "Montant invalide." })); return; }
-    if (r.valeur < 0 && !champ.negatifAutorise) {
-      setRbErreurs(prev => ({ ...prev, [champ.cle]: "Ce montant ne peut pas être négatif." })); return;
-    }
-    setRbErreurs(prev => ({ ...prev, [champ.cle]: null }));
-    majRemboursement({ [champ.cle]: r.valeur });
-  };
-
-  // En quittant un champ laisse vide, on relache le texte local pour que la
-  // valeur affichee redevienne celle des donnees (meme correctif que la
-  // provision : sans cela le dernier chiffre serait ineffacable).
-  const quitterRemboursement = (champ) => {
-    const t = rbTextes[champ.cle];
-    if (t !== null && t !== undefined && analyserNombre(t).vide) {
-      setRbTextes(prev => ({ ...prev, [champ.cle]: null }));
-    }
-  };
-
-  const valeurAffichee = (champ) => (champ.cle === "decompte" ? rbDecompte : (remb[champ.cle] || 0));
-
-  const enregistrerRemboursementWord = async () => {
-    setRbBusy(true); setRbMsg(null);
-    try {
-      const res = await saveRemboursementOneDrive(b.name, unit.name, unit.tenant || "Locataire", periodLabel, remb, rbDecompte, rbTotal);
-      setRbMsg({ type: "ok", texte: "✓ Document enregistré : " + res.folderPath + "/" + res.filename });
-    } catch (e) {
-      setRbMsg({ type: "err", texte: "Échec : " + e.message });
-    } finally {
-      setRbBusy(false);
-    }
-  };
-
   // Ecriture des ajustements dans les donnees. N'ecrit JAMAIS dans unit.
   const majAjustement = (patch) => {
     setData(prev => {
@@ -2677,6 +2619,65 @@ function DecomptesView({ data, setData, building }) {
   };
 
   const periodLabel = `${fmtDate(periodFrom)} - ${fmtDate(periodTo)}`;
+
+  // --- MODULE REMBOURSEMENT : lecture, ecriture, calcul ---
+  // Stocke dans data.remboursements, rattache au logement ET a la periode,
+  // donc retrouve a la reouverture. Aucune ecriture ni lecture de localStorage.
+  const remb = (data.remboursements && data.remboursements[cleAjust]) || {};
+  const rbDecompte = decompteEffectif(remb, diff);
+  const rbTotal = totalRemboursement(remb, diff);
+
+  const majRemboursement = (patch) => {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.remboursements) next.remboursements = {};
+      const actuel = next.remboursements[cleAjust] || {};
+      next.remboursements[cleAjust] = { ...actuel, ...patch };
+      return next;
+    });
+  };
+
+  const saisirRemboursement = (champ, txt) => {
+    setRbTextes(prev => ({ ...prev, [champ.cle]: txt }));
+    const r = analyserNombre(txt);
+    if (r.vide) {
+      setRbErreurs(prev => ({ ...prev, [champ.cle]: null }));
+      // Le decompte revient au calcul automatique ; les autres champs valent 0.
+      majRemboursement({ [champ.cle]: champ.cle === "decompte" ? null : 0 });
+      return;
+    }
+    if (!r.valide) { setRbErreurs(prev => ({ ...prev, [champ.cle]: "Montant invalide." })); return; }
+    if (r.valeur < 0 && !champ.negatifAutorise) {
+      setRbErreurs(prev => ({ ...prev, [champ.cle]: "Ce montant ne peut pas être négatif." })); return;
+    }
+    setRbErreurs(prev => ({ ...prev, [champ.cle]: null }));
+    majRemboursement({ [champ.cle]: r.valeur });
+  };
+
+  // En quittant un champ laisse vide, on relache le texte local pour que la
+  // valeur affichee redevienne celle des donnees (meme correctif que la
+  // provision : sans cela le dernier chiffre serait ineffacable).
+  const quitterRemboursement = (champ) => {
+    const t = rbTextes[champ.cle];
+    if (t !== null && t !== undefined && analyserNombre(t).vide) {
+      setRbTextes(prev => ({ ...prev, [champ.cle]: null }));
+    }
+  };
+
+  const valeurAffichee = (champ) => (champ.cle === "decompte" ? rbDecompte : (remb[champ.cle] || 0));
+
+  const enregistrerRemboursementWord = async () => {
+    setRbBusy(true); setRbMsg(null);
+    try {
+      const res = await saveRemboursementOneDrive(b.name, unit.name, unit.tenant || "Locataire", periodLabel, remb, rbDecompte, rbTotal);
+      setRbMsg({ type: "ok", texte: "✓ Document enregistré : " + res.folderPath + "/" + res.filename });
+    } catch (e) {
+      setRbMsg({ type: "err", texte: "Échec : " + e.message });
+    } finally {
+      setRbBusy(false);
+    }
+  };
+
 
   const openCurrentPreview = () => {
     setPreview({
