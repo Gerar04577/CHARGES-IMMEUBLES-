@@ -307,6 +307,141 @@ async function buildDocxBlob(buildingName, unitName, tenantName, period, lines, 
 }
 
 
+/* ============================================================================
+   ===== MODULE REMBOURSEMENT — DÉBUT ========================================
+   Bloc volontairement isole : il n'appelle aucune fonction du decompte et
+   n'en modifie aucune. Il reutilise seulement les briques deja globales
+   (docxTable/docxRow/docxCell/docxPara, fmtEUR, cleanPath, WEBHOOK_URL).
+   Calcul : total = garantie − retard loyer − retard assurance + decompte − degats
+   Le decompte garde son signe (positif = du au locataire).
+   ============================================================================ */
+
+const CHAMPS_REMBOURSEMENT = [
+  { cle: "garantie", libelle: "Garantie locative (€)", negatifAutorise: false },
+  { cle: "retardLoyer", libelle: "Retard de loyer (€)", negatifAutorise: false },
+  { cle: "retardAssurance", libelle: "Retard d'assurance (€)", negatifAutorise: false },
+  { cle: "decompte", libelle: "Décompte (€)", negatifAutorise: true },
+  { cle: "degats", libelle: "Dégâts locatifs (€)", negatifAutorise: false },
+];
+
+// Le decompte vaut null tant qu'il n'a pas ete force a la main : on prend
+// alors la valeur calculee par l'ecran.
+function decompteEffectif(remb, decompteCalcule) {
+  return (remb && remb.decompte !== null && remb.decompte !== undefined) ? remb.decompte : decompteCalcule;
+}
+
+function totalRemboursement(remb, decompteCalcule) {
+  const r = remb || {};
+  const total = (r.garantie || 0)
+    - (r.retardLoyer || 0)
+    - (r.retardAssurance || 0)
+    + decompteEffectif(r, decompteCalcule)
+    - (r.degats || 0);
+  return Math.round(total * 100) / 100;
+}
+
+function buildRemboursementDocxXml(buildingName, unitName, tenantName, period, remb, dec, total) {
+  const INK_HEX = "2E4E3F", PAPER_HEX = "F6F2EA", RED_HEX = "C0392B";
+  const r = remb || {};
+  const ligne = (libelle, montant, signe) => docxRow([
+    docxCell(libelle, { bold: true, align: "left" }),
+    docxCell((signe === "-" && montant > 0 ? "- " : "") + fmtEUR(Math.abs(montant))),
+  ]);
+
+  const titre = docxTable([
+    docxRow([
+      docxCell(buildingName.toUpperCase(), { bold: true, color: "FFFFFF", bg: INK_HEX, width: 3000 }),
+      docxCell(unitName.toUpperCase(), { bold: true, color: "FFFFFF", bg: INK_HEX, width: 3000 }),
+      docxCell((tenantName || "").toUpperCase(), { bold: true, color: "FFFFFF", bg: INK_HEX, width: 3000 }),
+    ]),
+  ], { nCols: 3 });
+
+  const intro = docxPara("Décompte de remboursement de la garantie locative établi à la fin de la location, pour la période " + period + ".", { size: 20, align: "both", spacingAfter: 200 });
+
+  const tableau = docxTable([
+    docxRow([
+      docxCell("Détail", { bold: true, color: "FFFFFF", bg: INK_HEX, align: "left" }),
+      docxCell("Montant", { bold: true, color: "FFFFFF", bg: INK_HEX }),
+    ]),
+    ligne("Garantie locative", r.garantie || 0),
+    ligne("Retard de loyer", r.retardLoyer || 0, "-"),
+    ligne("Retard d'assurance", r.retardAssurance || 0, "-"),
+    ligne("Décompte de charges", dec),
+    ligne("Dégâts locatifs", r.degats || 0, "-"),
+    docxRow([
+      docxCell("TOTAL À REMBOURSER", { bold: true, bg: PAPER_HEX, align: "left" }),
+      docxCell((total < 0 ? "- " : "") + fmtEUR(Math.abs(total)), { bold: true, bg: PAPER_HEX, color: total < 0 ? RED_HEX : "000000" }),
+    ]),
+  ], { nCols: 2 });
+
+  const note = docxPara("Un total négatif signifie que le locataire reste redevable de ce montant. Un total positif est à lui rembourser.", { size: 18, align: "both", spacingAfter: 120 });
+  const date = docxPara("Document établi le " + fmtDate(todayISO()), { size: 18 });
+
+  return titre + intro + tableau + note + date;
+}
+
+async function buildRemboursementBlob(buildingName, unitName, tenantName, period, remb, dec, total) {
+  const bodyXml = buildRemboursementDocxXml(buildingName, unitName, tenantName, period, remb, dec, total);
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>${bodyXml}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body>
+</w:document>`;
+  const zip = new window.JSZip();
+  zip.file("[Content_Types].xml", DOCX_CONTENT_TYPES);
+  zip.folder("_rels").file(".rels", DOCX_RELS);
+  zip.folder("word").file("document.xml", documentXml);
+  zip.folder("word").file("styles.xml", DOCX_STYLES);
+  zip.folder("word/_rels").file("document.xml.rels", DOCX_DOCUMENT_RELS);
+  zip.folder("docProps").file("core.xml", DOCX_CORE);
+  zip.folder("docProps").file("app.xml", DOCX_APP);
+  return zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+}
+
+// Meme dossier et meme action Make que le decompte (save_decompte_auto) :
+// AUCUNE modification du scenario Make n'est necessaire, seul le nom change.
+async function saveRemboursementOneDrive(buildingName, unitName, tenantName, period, remb, dec, total) {
+  const parts = period.split(" - ");
+  const dateFin = parts[parts.length - 1].trim();
+  const year = dateFin.slice(-4);
+  const buildingClean = cleanPath(buildingName);
+  const unitClean = cleanPath(unitName);
+  const tenantClean = cleanPath(tenantName);
+  const folderPath = year + "/" + buildingClean + "/" + unitClean;
+  const filename = "Remboursement_" + buildingClean + "_" + unitClean + "_" + tenantClean + "_" + year + ".docx";
+  const blob = await buildRemboursementBlob(buildingName, unitName, tenantName, period, remb, dec, total);
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+  const response = await fetch(WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "save_decompte_auto", folderPath, filename, data: base64 })
+  });
+  if (!response.ok) throw new Error("Erreur Make.com : " + response.status);
+  return { folderPath, filename };
+}
+
+// Champ defini AU NIVEAU DU MODULE : le definir dans le composant parent le
+// recreerait a chaque frappe et ferait perdre le focus.
+function ChampRemboursement({ libelle, texte, valeurAffichee, onTexte, onSortie, erreur }) {
+  return (
+    <div style={{ marginTop: 10 }}>
+      <span className="label">{libelle}</span>
+      <input type="text" inputMode="decimal" placeholder="0"
+        value={texte !== null && texte !== undefined ? texte : (valeurAffichee || "")}
+        onChange={e => onTexte(e.target.value)}
+        onBlur={onSortie} />
+      {erreur && (
+        <div style={{ fontSize: 12, color: "#b91c1c", marginTop: 4, fontWeight: 600 }}>{erreur}</div>
+      )}
+    </div>
+  );
+}
+/* ===== MODULE REMBOURSEMENT — FIN (suite dans DecomptesView) =============== */
+
 /* ============================================================
    SEED DATA (imported from the existing Excel/VBA workbooks)
    ============================================================ */
@@ -974,7 +1109,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v12";
+const APP_VERSION = "v13";
 
 function TopBar({ tab }) {
   const titles = {
@@ -2263,6 +2398,12 @@ function DecomptesView({ data, setData, building }) {
   // (e.g. RDC Commercial / privateMeterOnly).
   const [mazoutCost, setMazoutCost] = useState(0);
   const [istaCost, setIstaCost] = useState(0);
+  // --- MODULE REMBOURSEMENT : etats locaux ---
+  const [rbOuvert, setRbOuvert] = useState(false);
+  const [rbTextes, setRbTextes] = useState({});
+  const [rbErreurs, setRbErreurs] = useState({});
+  const [rbMsg, setRbMsg] = useState(null);
+  const [rbBusy, setRbBusy] = useState(false);
   const [moisNonPayesTexte, setMoisNonPayesTexte] = useState(null);
   const [provisionTexte, setProvisionTexte] = useState(null);
   const [erreurProvision, setErreurProvision] = useState(null);
@@ -2409,6 +2550,64 @@ function DecomptesView({ data, setData, building }) {
     ? provisionForcee
     : Math.round((unit.provisionMonthly || 0) * moisFactures * 100) / 100;
 
+  // --- MODULE REMBOURSEMENT : lecture, ecriture, calcul ---
+  // Stocke dans data.remboursements, rattache au logement ET a la periode,
+  // donc retrouve a la reouverture. Aucune ecriture ni lecture de localStorage.
+  const remb = (data.remboursements && data.remboursements[cleAjust]) || {};
+  const rbDecompte = decompteEffectif(remb, diff);
+  const rbTotal = totalRemboursement(remb, diff);
+
+  const majRemboursement = (patch) => {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.remboursements) next.remboursements = {};
+      const actuel = next.remboursements[cleAjust] || {};
+      next.remboursements[cleAjust] = { ...actuel, ...patch };
+      return next;
+    });
+  };
+
+  const saisirRemboursement = (champ, txt) => {
+    setRbTextes(prev => ({ ...prev, [champ.cle]: txt }));
+    const r = analyserNombre(txt);
+    if (r.vide) {
+      setRbErreurs(prev => ({ ...prev, [champ.cle]: null }));
+      // Le decompte revient au calcul automatique ; les autres champs valent 0.
+      majRemboursement({ [champ.cle]: champ.cle === "decompte" ? null : 0 });
+      return;
+    }
+    if (!r.valide) { setRbErreurs(prev => ({ ...prev, [champ.cle]: "Montant invalide." })); return; }
+    if (r.valeur < 0 && !champ.negatifAutorise) {
+      setRbErreurs(prev => ({ ...prev, [champ.cle]: "Ce montant ne peut pas être négatif." })); return;
+    }
+    setRbErreurs(prev => ({ ...prev, [champ.cle]: null }));
+    majRemboursement({ [champ.cle]: r.valeur });
+  };
+
+  // En quittant un champ laisse vide, on relache le texte local pour que la
+  // valeur affichee redevienne celle des donnees (meme correctif que la
+  // provision : sans cela le dernier chiffre serait ineffacable).
+  const quitterRemboursement = (champ) => {
+    const t = rbTextes[champ.cle];
+    if (t !== null && t !== undefined && analyserNombre(t).vide) {
+      setRbTextes(prev => ({ ...prev, [champ.cle]: null }));
+    }
+  };
+
+  const valeurAffichee = (champ) => (champ.cle === "decompte" ? rbDecompte : (remb[champ.cle] || 0));
+
+  const enregistrerRemboursementWord = async () => {
+    setRbBusy(true); setRbMsg(null);
+    try {
+      const res = await saveRemboursementOneDrive(b.name, unit.name, unit.tenant || "Locataire", periodLabel, remb, rbDecompte, rbTotal);
+      setRbMsg({ type: "ok", texte: "✓ Document enregistré : " + res.folderPath + "/" + res.filename });
+    } catch (e) {
+      setRbMsg({ type: "err", texte: "Échec : " + e.message });
+    } finally {
+      setRbBusy(false);
+    }
+  };
+
   // Ecriture des ajustements dans les donnees. N'ecrit JAMAIS dans unit.
   const majAjustement = (patch) => {
     setData(prev => {
@@ -2517,7 +2716,7 @@ function DecomptesView({ data, setData, building }) {
     <div>
       <div className="card">
         <span className="label">Logement</span>
-        <select value={unitId} onChange={e => { setUnitId(e.target.value); setMoisNonPayesTexte(null); setErreurMoisNonPayes(null); setProvisionTexte(null); setErreurProvision(null); setElecConsoOverride(null); setEauConsoOverride(null); setMazoutCost(0); setIstaCost(0); setPeriodFromOverride(null); setPeriodToOverride(null); }}>
+        <select value={unitId} onChange={e => { setUnitId(e.target.value); setMoisNonPayesTexte(null); setErreurMoisNonPayes(null); setProvisionTexte(null); setErreurProvision(null); setRbOuvert(false); setRbTextes({}); setRbErreurs({}); setRbMsg(null); setElecConsoOverride(null); setEauConsoOverride(null); setMazoutCost(0); setIstaCost(0); setPeriodFromOverride(null); setPeriodToOverride(null); }}>
           {b.units.map(u => <option key={u.id} value={u.id}>{u.name} — {u.tenant || "Vacant"}</option>)}
         </select>
       </div>
@@ -2698,6 +2897,57 @@ function DecomptesView({ data, setData, building }) {
           <button className="btn btn-primary" onClick={openCurrentPreview}><FileText size={14} /> Voir le décompte</button>
           <button className="btn btn-accent" onClick={archive}><Save size={14} /> Archiver cette période</button>
         </div>
+
+        {/* ===== MODULE REMBOURSEMENT — boutons et panneau ===== */}
+        <div className="row" style={{ marginTop: 8 }}>
+          <button className="btn btn-primary" onClick={() => setRbOuvert(v => !v)}>
+            💶 {rbOuvert ? "Fermer le remboursement" : "Remboursement"}
+          </button>
+          <button className="btn btn-accent" onClick={enregistrerRemboursementWord} disabled={rbBusy}>
+            <Save size={14} /> {rbBusy ? "Envoi en cours…" : "Sauver remboursement"}
+          </button>
+        </div>
+
+        {rbMsg && (
+          <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, color: rbMsg.type === "ok" ? INK : "#b91c1c" }}>
+            {rbMsg.texte}
+          </div>
+        )}
+
+        {rbOuvert && (
+          <div style={{ marginTop: 12, background: PAPER, borderRadius: 10, padding: "12px 14px" }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>Remboursement de la garantie</div>
+            <div style={{ fontSize: 12, color: MUTED }}>
+              {unit.tenant || "Locataire"} — {periodLabel}
+            </div>
+
+            {CHAMPS_REMBOURSEMENT.map(champ => (
+              <ChampRemboursement key={champ.cle}
+                libelle={champ.libelle}
+                texte={rbTextes[champ.cle]}
+                valeurAffichee={valeurAffichee(champ)}
+                erreur={rbErreurs[champ.cle]}
+                onTexte={txt => saisirRemboursement(champ, txt)}
+                onSortie={() => quitterRemboursement(champ)} />
+            ))}
+
+            <div style={{ fontSize: 12, color: MUTED, marginTop: 8, lineHeight: 1.5 }}>
+              Garantie − retard de loyer − retard d'assurance + décompte − dégâts.
+              Le décompte garde son signe : positif s'il vous est dû par vous, négatif si le locataire vous doit.
+              Videz le champ Décompte pour revenir à la valeur calculée ci-dessus.
+            </div>
+
+            <div className="between" style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>TOTAL À REMBOURSER</div>
+              <MeterDigits value={(rbTotal < 0 ? "-" : "") + fmtEUR(Math.abs(rbTotal))} cls={rbTotal < 0 ? "red" : ""} />
+            </div>
+
+            <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>
+              Ces montants sont conservés : pensez à « ☁️ Sauvegarde automatique OneDrive » avant de fermer l'application.
+            </div>
+          </div>
+        )}
+        {/* ===== MODULE REMBOURSEMENT — fin du panneau ===== */}
       </div>
 
       <div className="card">
