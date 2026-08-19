@@ -23,6 +23,15 @@
 <body>
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
+/* ============================================================
+   POINT UNIQUE DE CONFIGURATION — URL DU WEBHOOK MAKE.COM
+   Elle etait recopiee a QUATRE endroits du fichier. En cas de changement
+   de compte Make, en oublier un seul cassait une partie de l'app sans le
+   moindre message. Elle est desormais declaree ICI et NULLE PART AILLEURS :
+   une seule ligne a modifier pour changer de compte.
+   ============================================================ */
+const WEBHOOK_URL = "https://hook.eu1.make.com/pya67pi1a9tsccwgssa7pieib9wa5438";
+
 const { useState, useEffect, useMemo, useRef } = React;
 
 /* ---- localStorage-based shim for window.storage (Claude artifact API) ---- */
@@ -627,7 +636,7 @@ async function saveDecompteOneDrive(buildingName, unitName, tenantName, period, 
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
-  const response = await fetch("https://hook.eu1.make.com/pya67pi1a9tsccwgssa7pieib9wa5438", {
+  const response = await fetch(WEBHOOK_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "save_decompte_auto", folderPath, filename, data: base64 })
@@ -819,7 +828,7 @@ function App() {
         try {
           const controller = new AbortController();
           setTimeout(() => controller.abort(), 10000);
-          const response = await fetch("https://hook.eu1.make.com/pya67pi1a9tsccwgssa7pieib9wa5438", {
+          const response = await fetch(WEBHOOK_URL, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "import" }),
             signal: controller.signal
@@ -965,7 +974,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v9";
+const APP_VERSION = "v10";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1163,7 +1172,6 @@ function BottomNav({ tab, setTab }) {
    DASHBOARD
    ============================================================ */
 /* Sauvegarde OneDrive automatique */
-const WEBHOOK_URL = "https://hook.eu1.make.com/pya67pi1a9tsccwgssa7pieib9wa5438";
 function markPendingSync() { try { localStorage.setItem("charges-pending-sync", "1"); } catch (e) {} try { window.dispatchEvent(new Event("charges-sync-status")); } catch (e) {} }
 function clearPendingSync() { try { localStorage.removeItem("charges-pending-sync"); localStorage.removeItem("charges-sync-echec"); localStorage.setItem("charges-last-sync", new Date().toISOString()); } catch (e) {} try { window.dispatchEvent(new Event("charges-sync-status")); } catch (e) {} }
 function hasPendingSync() { try { return localStorage.getItem("charges-pending-sync") === "1"; } catch (e) { return false; } }
@@ -1351,7 +1359,7 @@ function BackupBar({ data, setData }) {
 
       const json = JSON.stringify(data, null, 2);
       const base64 = btoa(unescape(encodeURIComponent(json)));
-      const response = await fetch("https://hook.eu1.make.com/pya67pi1a9tsccwgssa7pieib9wa5438", {
+      const response = await fetch(WEBHOOK_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "save", data: base64, filename: "charges-data.json" })
