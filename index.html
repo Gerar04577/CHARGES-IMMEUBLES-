@@ -625,6 +625,8 @@ const RED = "#C0392B";
 const TEXT = "#2B2B28";
 const MUTED = "#8A8478";
 const LINE = "#E4DDD0";
+const SABLE = "#EDE0C8";      // beige sable, bouton de comparaison
+const SABLE_BORD = "#DCC9A6";
 
 const GlobalStyle = () => (
   <style>{`
@@ -1275,7 +1277,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v21";
+const APP_VERSION = "v22";
 
 function TopBar({ tab }) {
   const titles = {
@@ -3017,9 +3019,17 @@ function DecomptesView({ data, setData, building }) {
         </button>
       </div>
 
-      <div className="row" style={{ marginTop: 8 }}>
-        <button className="btn" onClick={() => (cmpOuvert ? setCmpOuvert(false) : chargerComparaison())} disabled={cmpBusy}>
-          🔗 {cmpBusy ? "Lecture…" : (cmpOuvert ? "Fermer la comparaison" : "Comparer noms remboursement")}
+      {/* Bouton centre, en beige sable : il se distingue des deux rangees
+          d'actions au-dessus sans jurer avec la palette de l'application. */}
+      <div style={{ marginTop: 8, display: "flex", justifyContent: "center" }}>
+        <button className="btn"
+          onClick={() => (cmpOuvert ? setCmpOuvert(false) : chargerComparaison())}
+          disabled={cmpBusy}
+          style={{
+            width: "66%", justifyContent: "center", textAlign: "center",
+            background: SABLE, borderColor: SABLE_BORD, color: INK, fontWeight: 700,
+          }}>
+          🔗 {cmpBusy ? "Lecture…" : (cmpOuvert ? "Fermer la comparaison" : "Comparer les noms avec GL")}
         </button>
       </div>
 
