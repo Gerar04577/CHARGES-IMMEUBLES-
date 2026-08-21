@@ -426,6 +426,172 @@ async function saveRemboursementOneDrive(buildingName, unitName, tenantName, per
 
 // Champ defini AU NIVEAU DU MODULE : le definir dans le composant parent le
 // recreerait a chaque frappe et ferait perdre le focus.
+/* ---------------------------------------------------------------------------
+   COMPARAISON AVEC GESTION LOYERS
+   Logique d'appariement REPRISE TELLE QUELLE de graph-veros-scan.js (Gestion
+   Loyers) : on ne compare pas des mots, on reduit chaque libelle a un TYPE et
+   un NUMERO. "APPART 3 GUIRLANDE" et "Appartement 3" donnent tous deux
+   ETAGE/3, "APPART. RDC GUIRLANDE" et "RDC Arriere" donnent RDC.
+   Verifie sur les vraies donnees : 35 appariements sur 35.
+   --------------------------------------------------------------------------- */
+
+// Identifiants d'immeuble differents entre les deux applications.
+const IMMEUBLE_GESTION_LOYERS = { "petite-guirlande": "ptg", "biche": "biche", "nimy": "nimy" };
+
+function normaliserNomUnite(s) {
+  return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
+}
+
+function extraireTypeEtNumero(nom) {
+  const n = normaliserNomUnite(nom);
+  if (/COMMERCIAL/.test(n)) return { type: "RDC_COMMERCIAL", num: null };
+  if (/\bRDC\b/.test(n) || /REZ[\s-]*DE[\s-]*CHAUSSEE/.test(n)) return { type: "RDC", num: null };
+  if (/GARAGE/.test(n)) return { type: "GARAGE", num: null };
+  if (/DUPLEX/.test(n)) return { type: "DUPLEX", num: null };
+  let m = n.match(/STUDIO\s*(\d+)/);
+  if (m) return { type: "STUDIO", num: parseInt(m[1], 10) };
+  m = n.match(/(\d+)\s*(ER|EME|E)?\s*ETAGE/);
+  if (m) return { type: "ETAGE", num: parseInt(m[1], 10) };
+  m = n.match(/APPART(?:EMENT)?\.?\s*(\d+)/);
+  if (m) return { type: "ETAGE", num: parseInt(m[1], 10) }; // APPART n et ETAGE n : meme logement
+  if (/\bAPPARTEMENT\b/.test(n) || /\bAPPART\.?\b/.test(n)) return { type: "APPART", num: null };
+  return { type: null, num: null };
+}
+
+const cleAppariement = (immeubleId, libelleUnite) => {
+  const t = extraireTypeEtNumero(libelleUnite);
+  return immeubleId + "|" + t.type + "|" + t.num;
+};
+
+// Lit remboursements.json via la route Make dediee. Leve une exception en cas
+// d'echec : l'appelant affiche l'erreur, il ne se rabat JAMAIS sur autre chose.
+async function lireRemboursementsGestionLoyers() {
+  const controller = new AbortController();
+  const minuteur = setTimeout(() => controller.abort(), 15000);
+  try {
+    const reponse = await fetch(WEBHOOK_URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "read_remboursements" }), signal: controller.signal,
+    });
+    if (!reponse.ok) throw new Error("Make.com a répondu " + reponse.status);
+    const texte = (await reponse.text()).trim();
+    if (!texte) throw new Error("Fichier remboursements.json introuvable ou vide sur OneDrive.");
+    const contenu = JSON.parse(texte);
+    if (!contenu || !Array.isArray(contenu.locataires)) throw new Error("Le fichier reçu n'a pas le format attendu.");
+    return contenu;
+  } finally {
+    clearTimeout(minuteur);
+  }
+}
+
+// Etat d'une correspondance entre un logement et une entree du fichier.
+// "sur" : les deux noms concordent (ou l'un des deux est absent) -> rien a demander.
+// "doute" : les noms se ressemblent sans etre identiques -> on DEMANDE a Gerard.
+// "different" : locataires sans rapport -> vrai changement, aucune question.
+const SANS_LOCATAIRE = ["INOCCUPE", "VACANT", "LIBRE", "VIDE"];
+
+function comparerNoms(nomApp, nomFichier) {
+  const nettoyer = (x) => {
+    const t = normaliserNomUnite(x || "").replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+    return SANS_LOCATAIRE.includes(t) ? "" : t;       // « Inoccupé » n'est pas un nom
+  };
+  const a = nettoyer(nomApp), b = nettoyer(nomFichier);
+  if (!a && !b) return "sur";                         // vide des deux cotes : rien a comparer
+  if (!a || !b) return "doute";                       // un seul cote renseigne : on demande
+  if (a.replace(/ /g, "") === b.replace(/ /g, "")) return "sur";
+  const motsA = a.split(" ").filter(Boolean);
+  const motsB = b.split(" ").filter(Boolean);
+  // memes mots dans un autre ordre : DELMOTE Ema / Ema DELMOTE
+  const triA = motsA.slice().sort().join(" "), triB = motsB.slice().sort().join(" ");
+  if (triA === triB) return "doute";
+  // au moins un mot commun d'au moins 4 lettres : orthographe voisine, meme famille,
+  // co-locataire disparu... bref, tout ce qui merite une question plutot qu'un verdict.
+  const communs = motsA.filter(m => m.length >= 4 && motsB.includes(m));
+  if (communs.length > 0) return "doute";
+  // orthographe a une lettre pres sur le mot le plus long (KOZLENKO / KOSLENKO)
+  const plusLong = t => t.reduce((x, y) => (y.length > x.length ? y : x), "");
+  const la = plusLong(motsA), lb = plusLong(motsB);
+  if (la.length >= 5 && lb.length >= 5 && Math.abs(la.length - lb.length) <= 1) {
+    let differences = 0;
+    const n = Math.max(la.length, lb.length);
+    for (let i = 0, j = 0; i < n && differences <= 1; i++, j++) {
+      if (la[i] !== lb[j]) {
+        differences++;
+        if (la.length > lb.length) j--; else if (lb.length > la.length) i--;
+      }
+    }
+    if (differences <= 1) return "doute";
+  }
+  return "different";
+}
+
+const cleDecision = (immeubleId, unitId) => immeubleId + "|" + unitId;
+
+// Duree au-dela de laquelle on relit remboursements.json. Ce n'est PAS un
+// minuteur : rien n'est declenche tout seul, on verifie seulement l'age de la
+// derniere lecture au moment ou l'utilisateur ouvre le panneau.
+const FRAICHEUR_LISTE_MS = 5 * 60 * 1000;
+
+// Construit, pour un immeuble donne, la liste comparee logement par logement.
+// Liste complete des 50 logements : on part du FICHIER (7 immeubles) et on
+// rattache, quand il existe, le logement correspondant de l'application.
+function comparerTousLesLogements(data, contenu) {
+  const parImmeuble = {};
+  // Une LISTE par cle, jamais une seule valeur : si deux logements se ramenaient
+  // a la meme cle, aucun ne serait perdu en silence.
+  const appParCle = {};
+  for (const b of (data.buildings || [])) {
+    for (const u of b.units) {
+      const k = cleAppariement(b.id, u.name);
+      if (!appParCle[k]) appParCle[k] = [];
+      appParCle[k].push({ unite: u, immeubleId: b.id, immeubleNom: b.name });
+    }
+  }
+  for (const l of (contenu.locataires || [])) {
+    const bid = IMMEUBLE_GESTION_LOYERS[l.immeubleId] || null;   // null = immeuble absent ici
+    const liste = bid ? appParCle[cleAppariement(bid, l.unite)] : null;
+    const app = (liste && liste.length) ? liste[0] : null;
+    const nomImmeuble = (app && app.immeubleNom) || l.immeuble || l.immeubleId;
+    if (!parImmeuble[nomImmeuble]) parImmeuble[nomImmeuble] = [];
+    parImmeuble[nomImmeuble].push({
+      gl: l,
+      unite: app ? app.unite : null,
+      immeubleId: bid,
+      etat: app ? comparerNoms(app.unite.tenant, l.locataire) : "sur",
+      dansApp: !!app,
+    });
+    if (app) liste.shift();                    // on consomme UN logement, pas toute la cle
+  }
+  // logements connus de l'application mais absents du fichier (y compris ceux
+  // qui partageaient une cle avec un autre : plus rien ne se perd)
+  const absentsDuFichier = [].concat(...Object.values(appParCle));
+  return { parImmeuble, absentsDuFichier };
+}
+
+function comparerAvecGestionLoyers(building, unites, contenu) {
+  const parCle = {};
+  const nonApparies = [];
+  for (const l of (contenu.locataires || [])) {
+    const bid = IMMEUBLE_GESTION_LOYERS[l.immeubleId];
+    if (!bid) continue;                    // immeuble absent de cette application
+    if (bid !== building) continue;        // autre immeuble que celui affiche
+    const k = cleAppariement(bid, l.unite);
+    if (parCle[k]) nonApparies.push(l);    // deux entrees pour le meme logement
+    else parCle[k] = l;
+  }
+  const utilisees = new Set();
+  const lignes = unites.map(u => {
+    const k = cleAppariement(building, u.name);
+    const gl = parCle[k];
+    if (gl) utilisees.add(k);
+    return { unite: u, gl: gl || null };
+  });
+  for (const k of Object.keys(parCle)) {
+    if (!utilisees.has(k)) nonApparies.push(parCle[k]);
+  }
+  return { lignes, nonApparies };
+}
+
 function ChampRemboursement({ libelle, texte, valeurAffichee, onTexte, onSortie, erreur }) {
   return (
     <div style={{ marginTop: 10 }}>
@@ -1109,7 +1275,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v14";
+const APP_VERSION = "v21";
 
 function TopBar({ tab }) {
   const titles = {
@@ -2404,6 +2570,14 @@ function DecomptesView({ data, setData, building }) {
   const [rbErreurs, setRbErreurs] = useState({});
   const [rbMsg, setRbMsg] = useState(null);
   const [rbBusy, setRbBusy] = useState(false);
+  // --- COMPARAISON GESTION LOYERS ---
+  const [cmpOuvert, setCmpOuvert] = useState(false);
+  const [rbDoute, setRbDoute] = useState(null); // entree en attente de confirmation
+  const [rbInfo, setRbInfo] = useState(null);  // explication quand rien n'est repris
+  const [cmpBusy, setCmpBusy] = useState(false);
+  const [cmpErreur, setCmpErreur] = useState(null);
+  const [cmpContenu, setCmpContenu] = useState(null);
+  const [cmpLuA, setCmpLuA] = useState(0); // heure de la derniere lecture reussie
   const [moisNonPayesTexte, setMoisNonPayesTexte] = useState(null);
   const [provisionTexte, setProvisionTexte] = useState(null);
   const [erreurProvision, setErreurProvision] = useState(null);
@@ -2420,25 +2594,22 @@ function DecomptesView({ data, setData, building }) {
 
   if (!unit) return null;
 
-  if (unit.privateMeterOnly) {
-    return (
-      <div>
-        <div className="card">
-          <span className="label">Logement</span>
-          <select value={unitId} onChange={e => setUnitId(e.target.value)}>
-            {b.units.map(u => <option key={u.id} value={u.id}>{u.name} — {u.tenant || "Vacant"}</option>)}
-          </select>
-        </div>
-        <div className="card">
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>{unit.name} — compteur privé</div>
-          <div style={{ fontSize: 13, color: MUTED }}>
-            Ce logement dispose de son propre compteur électrique indépendant et n'est pas inclus dans les
-            décomptes de charges communes (eau, chauffage, nettoyage). Aucun calcul n'est effectué ici.
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // DEFAUT 11 : cette fonction etait declaree APRES le retour anticipe du
+  // logement a compteur prive, alors que le selecteur de CE retour anticipe
+  // l'utilise. Cliquer sur ce selecteur levait « Cannot access
+  // changerLogement before initialization » : l'application plantait.
+  // Elle est desormais declaree avant les deux selecteurs.
+  // DEFAUT 4 : il existe DEUX selecteurs de logement dans cette vue (le second
+  // s'affiche pour un logement a compteur prive, comme le RDC Commercial de PTG)
+  // et le second ne remettait RIEN a zero — ni les saisies du decompte, ni le
+  // mazout, ni l'ISTA, ni les dates forcees, ni le panneau Remboursement.
+  // Les deux passent desormais par la meme fonction.
+  const changerLogement = (id) => {
+    setUnitId(id);
+    setMoisNonPayesTexte(null); setErreurMoisNonPayes(null); setProvisionTexte(null); setErreurProvision(null); setRbOuvert(false); setRbTextes({}); setRbErreurs({}); setRbMsg(null); setCmpOuvert(false); setRbDoute(null); setCmpErreur(null); setRbInfo(null); setElecConsoOverride(null); setEauConsoOverride(null); setMazoutCost(0); setIstaCost(0); setPeriodFromOverride(null); setPeriodToOverride(null);
+  };
+
+
 
   const elecMeters = unitMeters(data.meters, building, unitId);
   const eauMeters = elecMeters.filter(m => m.type === "eau");
@@ -2624,8 +2795,14 @@ function DecomptesView({ data, setData, building }) {
   // Stocke dans data.remboursements, rattache au logement ET a la periode,
   // donc retrouve a la reouverture. Aucune ecriture ni lecture de localStorage.
   const remb = (data.remboursements && data.remboursements[cleAjust]) || {};
-  const rbDecompte = decompteEffectif(remb, diff);
-  const rbTotal = totalRemboursement(remb, diff);
+  // DEFAUT 13 : un logement a compteur prive n'entre PAS dans les charges
+  // communes, mais depuis que la vue calcule tout avant de l'afficher, son
+  // « decompte » etait quand meme calcule et ajoute au remboursement — le RDC
+  // Commercial affichait 6 480 € au lieu de 4 200 €. Pour ces logements, le
+  // decompte vaut zero, comme l'ecran l'annonce.
+  const decompteDeBase = unit.privateMeterOnly ? 0 : diff;
+  const rbDecompte = decompteEffectif(remb, decompteDeBase);
+  const rbTotal = totalRemboursement(remb, decompteDeBase);
 
   const majRemboursement = (patch) => {
     setData(prev => {
@@ -2646,6 +2823,8 @@ function DecomptesView({ data, setData, building }) {
       majRemboursement({ [champ.cle]: champ.cle === "decompte" ? null : 0 });
       return;
     }
+    // Etat intermediaire de frappe (« - », « , », « -, ») : ni erreur, ni ecriture.
+    if (/^-?[.,]?$/.test(txt.trim())) { setRbErreurs(prev => ({ ...prev, [champ.cle]: null })); return; }
     if (!r.valide) { setRbErreurs(prev => ({ ...prev, [champ.cle]: "Montant invalide." })); return; }
     if (r.valeur < 0 && !champ.negatifAutorise) {
       setRbErreurs(prev => ({ ...prev, [champ.cle]: "Ce montant ne peut pas être négatif." })); return;
@@ -2665,6 +2844,115 @@ function DecomptesView({ data, setData, building }) {
   };
 
   const valeurAffichee = (champ) => (champ.cle === "decompte" ? rbDecompte : (remb[champ.cle] || 0));
+
+  // --- LECTURE DE GESTION LOYERS : partagee par le panneau et la comparaison ---
+  const lireGestionLoyers = async () => {
+    setCmpBusy(true); setCmpErreur(null);
+    try {
+      const contenu = await lireRemboursementsGestionLoyers();
+      setCmpContenu(contenu); setCmpLuA(Date.now());
+      return contenu;
+    } catch (e) {
+      setCmpContenu(null); setCmpErreur(e.message);
+      return null;
+    } finally {
+      setCmpBusy(false);
+    }
+  };
+
+  const chargerComparaison = async () => { await lireGestionLoyers(); setCmpOuvert(true); };
+
+  const comparaison = cmpContenu ? comparerAvecGestionLoyers(building, b.units, cmpContenu) : null;
+  const comparaisonComplete = cmpContenu ? comparerTousLesLogements(data, cmpContenu) : null;
+
+  // Ecrit les montants venant de Gestion Loyers dans le panneau.
+  const reprendreValeurs = (gl) => {
+    const patch = {
+      garantie: gl.garantieMontant || 0,
+      retardLoyer: gl.retardLoyer || 0,
+      retardAssurance: gl.retardAssurance || 0,
+    };
+    // N'ECRIT QUE SI QUELQUE CHOSE CHANGE REELLEMENT : sinon, ouvrir le
+    // panneau pour regarder suffirait a marquer le fichier comme modifie.
+    const identique = Object.keys(patch).every(k => (remb[k] || 0) === patch[k]);
+    if (!identique) majRemboursement(patch);
+    setRbTextes(prev => ({ ...prev, garantie: null, retardLoyer: null, retardAssurance: null }));
+    setRbErreurs({});
+  };
+
+  // Decisions de correspondance deja prises, conservees dans les donnees OneDrive.
+  const decisions = data.decisionsRemboursement || {};
+  const enregistrerDecision = (accepte) => {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.decisionsRemboursement) next.decisionsRemboursement = {};
+      next.decisionsRemboursement[cleDecision(building, unitId)] = accepte ? "oui" : "non";
+      return next;
+    });
+  };
+
+  // Un montant deja saisi pour ce logement et cette periode ne doit JAMAIS
+  // etre ecrase par la reprise automatique : le travail de Gerard prime
+  // toujours sur le fichier.
+  const dejaSaisi = remb.garantie !== undefined
+    || remb.retardLoyer !== undefined
+    || remb.retardAssurance !== undefined;
+
+  // DEFAUT 12 : le bouton « Réessayer » du panneau appelait ouvrirRemboursement,
+  // qui commence par un bascule ouvert/ferme — il REFERMAIT donc le panneau au
+  // lieu de relire. La lecture est desormais une fonction a part, appelee aussi
+  // bien a l'ouverture que par Réessayer.
+  const reprendreDepuisFichier = async () => {
+    setRbDoute(null); setCmpErreur(null); setRbInfo(null);
+    if (dejaSaisi) return;                      // montants deja saisis : on n'y touche pas
+    // Au-dela de 5 minutes, on relit : la liste a pu etre regeneree entre-temps.
+    const frais = cmpContenu && (Date.now() - cmpLuA) < FRAICHEUR_LISTE_MS;
+    const contenu = frais ? cmpContenu : await lireGestionLoyers();
+    if (!contenu) return;                       // echec : message affiche, champs a la main
+    const cmp = comparerAvecGestionLoyers(building, b.units, contenu);
+    const ligne = cmp.lignes.find(l => l.unite.id === unitId);
+    if (!ligne || !ligne.gl) {
+      setRbInfo("Ce logement ne figure pas dans la liste de Gestion Loyers (logement inoccupé, "
+        + "ou liste pas encore régénérée). Aucun montant n'a été repris : saisissez-les à la main.");
+      return;
+    }
+    const etat = comparerNoms(unit.tenant, ligne.gl.locataire);
+    const dejaDecide = decisions[cleDecision(building, unitId)];
+    if (etat === "doute" && dejaDecide !== "oui") {
+      if (dejaDecide === "non") return;         // refus deja exprime : on ne redemande pas
+      setRbDoute(ligne.gl);                     // on demande avant de reprendre quoi que ce soit
+      return;
+    }
+    if (etat === "different") {
+      setRbInfo("Le locataire enregistré ici (" + (unit.tenant || "aucun") + ") ne correspond pas à celui "
+        + "de Gestion Loyers (" + ligne.gl.locataire + "). Aucun montant n'a été repris : saisissez-les à la main.");
+      return;
+    }
+    reprendreValeurs(ligne.gl);
+  };
+
+  // Ouverture du panneau : bascule, puis lecture.
+  const ouvrirRemboursement = async () => {
+    if (rbOuvert) { setRbOuvert(false); return; }
+    setRbOuvert(true);
+    await reprendreDepuisFichier();
+  };
+
+  // Permet de revenir sur un « Non » : sans cela, un clic malheureux
+  // privait le logement de toute reprise automatique, definitivement.
+  const annulerDecision = async () => {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (next.decisionsRemboursement) delete next.decisionsRemboursement[cleDecision(building, unitId)];
+      return next;
+    });
+    const frais = cmpContenu && (Date.now() - cmpLuA) < FRAICHEUR_LISTE_MS;
+    const contenu = frais ? cmpContenu : await lireGestionLoyers();
+    if (!contenu) return;
+    const cmp = comparerAvecGestionLoyers(building, b.units, contenu);
+    const ligne = cmp.lignes.find(l => l.unite.id === unitId);
+    if (ligne && ligne.gl) setRbDoute(ligne.gl);
+  };
 
   const enregistrerRemboursementWord = async () => {
     setRbBusy(true); setRbMsg(null);
@@ -2713,11 +3001,241 @@ function DecomptesView({ data, setData, building }) {
     );
   }
 
+  // Les boutons et panneaux du remboursement sont montes en variable pour etre
+  // affiches AUSSI sur un logement a compteur prive : les 50 logements doivent
+  // pouvoir donner lieu a un remboursement, y compris ceux qui n'ont pas de
+  // decompte de charges.
+  const blocRemboursement = (
+    <>
+        {/* ===== MODULE REMBOURSEMENT — boutons et panneau ===== */}
+      <div className="row" style={{ marginTop: 8 }}>
+        <button className="btn btn-primary" onClick={ouvrirRemboursement} disabled={cmpBusy && !rbOuvert}>
+          💶 {(cmpBusy && !rbOuvert) ? "Lecture…" : (rbOuvert ? "Fermer le remboursement" : "Remboursement")}
+        </button>
+        <button className="btn btn-accent" onClick={enregistrerRemboursementWord} disabled={rbBusy}>
+          <Save size={14} /> {rbBusy ? "Envoi en cours…" : "Sauver remboursement"}
+        </button>
+      </div>
+
+      <div className="row" style={{ marginTop: 8 }}>
+        <button className="btn" onClick={() => (cmpOuvert ? setCmpOuvert(false) : chargerComparaison())} disabled={cmpBusy}>
+          🔗 {cmpBusy ? "Lecture…" : (cmpOuvert ? "Fermer la comparaison" : "Comparer noms remboursement")}
+        </button>
+      </div>
+
+      {/* ===== COMPARAISON DES 50 LOGEMENTS ===== */}
+      {cmpOuvert && (
+        <div style={{ marginTop: 12, background: PAPER, borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Comparaison des noms — tous les immeubles</div>
+
+          {cmpErreur ? (
+            <div>
+              <div style={{ background: "#b91c1c", color: "#fff", borderRadius: 8, padding: "10px 12px", fontSize: 13.5, lineHeight: 1.5 }}>
+                Pas de connexion — lecture impossible : {cmpErreur}
+                <div style={{ marginTop: 4, fontWeight: 400 }}>
+                  Vérifie que la liste a bien été enregistrée depuis Gestion Loyers
+                  (vue « 📋 Liste remboursement », bouton « 📤 Enregistrer sur OneDrive »).
+                </div>
+              </div>
+              <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={chargerComparaison} disabled={cmpBusy}>
+                🔄 Réessayer
+              </button>
+            </div>
+          ) : comparaisonComplete ? (
+            <div>
+              <div style={{ fontSize: 12, color: MUTED, marginBottom: 8, lineHeight: 1.5 }}>
+                Liste générée le {fmtDate((cmpContenu.genereLe || "").slice(0, 10))} —{" "}
+                {Object.values(comparaisonComplete.parImmeuble).reduce((n, l) => n + l.length, 0)} logements occupés
+                sur {Object.keys(comparaisonComplete.parImmeuble).length} immeubles.
+                <br />
+                <span style={{ color: INK }}>■</span> concordant ·{" "}
+                <span style={{ color: "#b45309" }}>■</span> à confirmer ·{" "}
+                <span style={{ color: "#b91c1c" }}>■</span> locataire différent
+              </div>
+
+              {Object.keys(comparaisonComplete.parImmeuble).map(nomImm => (
+                <div key={nomImm} style={{ marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 4 }}>{nomImm}</div>
+                  <div className="scrollx">
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                      <thead>
+                        <tr style={{ textAlign: "left", color: MUTED }}>
+                          <th style={{ padding: "3px 5px" }}>Logement</th>
+                          <th style={{ padding: "3px 5px" }}>Ici</th>
+                          <th style={{ padding: "3px 5px" }}>Gestion Loyers</th>
+                          <th style={{ padding: "3px 5px", textAlign: "right" }}>Garantie</th>
+                          <th style={{ padding: "3px 5px", textAlign: "right" }}>Loyer</th>
+                          <th style={{ padding: "3px 5px", textAlign: "right" }}>Assur.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {comparaisonComplete.parImmeuble[nomImm].map((r, i) => {
+                          const couleur = r.etat === "different" ? "#b91c1c" : (r.etat === "doute" ? "#b45309" : INK);
+                          return (
+                            <tr key={i} style={{ borderTop: "1px solid " + LINE, color: couleur }}>
+                              <td style={{ padding: "5px" }}>{r.unite ? r.unite.name : r.gl.unite}</td>
+                              <td style={{ padding: "5px" }}>{r.dansApp ? (r.unite.tenant || "—") : <i>pas dans cette app</i>}</td>
+                              <td style={{ padding: "5px" }}>{r.gl.locataire}</td>
+                              <td style={{ padding: "5px", textAlign: "right" }}>{r.gl.garantieMontant ? fmtEUR(r.gl.garantieMontant) : "—"}</td>
+                              <td style={{ padding: "5px", textAlign: "right" }}>{r.gl.retardLoyer ? fmtEUR(r.gl.retardLoyer) : "—"}</td>
+                              <td style={{ padding: "5px", textAlign: "right" }}>{r.gl.retardAssurance ? fmtEUR(r.gl.retardAssurance) : "—"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+
+              {comparaisonComplete.absentsDuFichier.length > 0 && (
+                <div style={{ marginTop: 10, fontSize: 12, color: MUTED, lineHeight: 1.5 }}>
+                  Logements de cette application absents du fichier (inoccupés ou non repris) :{" "}
+                  {comparaisonComplete.absentsDuFichier.map(a => a.immeubleNom + " / " + a.unite.name).join(", ")}
+                </div>
+              )}
+
+              <div style={{ marginTop: 10, fontSize: 12, color: MUTED, lineHeight: 1.5 }}>
+                Les logements « à confirmer » vous seront soumis à l'ouverture du panneau Remboursement,
+                avec une question à laquelle vous répondrez une seule fois.
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: MUTED }}>Lecture en cours…</div>
+          )}
+        </div>
+      )}
+      {/* ===== fin de la comparaison ===== */}
+
+      {rbMsg && (
+        <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, color: rbMsg.type === "ok" ? INK : "#b91c1c" }}>
+          {rbMsg.texte}
+        </div>
+      )}
+
+      {rbOuvert && (
+        <div style={{ marginTop: 12, background: PAPER, borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>Remboursement de la garantie</div>
+          <div style={{ fontSize: 12, color: MUTED }}>
+            {unit.tenant || "Locataire"} — {periodLabel}
+          </div>
+
+          {cmpErreur && (
+            <div style={{ background: "#fdf3e3", border: "2px solid #b45309", color: "#7c3f06", borderRadius: 8, padding: "10px 12px", marginTop: 8, fontSize: 13, lineHeight: 1.5 }}>
+              <b>Pas de connexion</b> — impossible de lire les données de Gestion Loyers.
+              <div style={{ marginTop: 4 }}>{cmpErreur}</div>
+              <div style={{ marginTop: 4 }}>Les champs restent vides : tu peux saisir les montants à la main.</div>
+              <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={reprendreDepuisFichier} disabled={cmpBusy}>
+                🔄 Réessayer
+              </button>
+            </div>
+          )}
+
+          {rbInfo && !rbDoute && (
+            <div style={{ background: "#fdf3e3", border: "2px solid #b45309", color: "#7c3f06", borderRadius: 8, padding: "10px 12px", marginTop: 8, fontSize: 13, lineHeight: 1.5 }}>
+              {rbInfo}
+            </div>
+          )}
+
+          {!rbDoute && decisions[cleDecision(building, unitId)] === "non" && (
+            <div style={{ fontSize: 12, color: MUTED, marginTop: 8, lineHeight: 1.5 }}>
+              Vous aviez répondu « Non » pour ce logement : les montants de Gestion Loyers
+              ne sont plus repris automatiquement.{" "}
+              <button className="btn" style={{ padding: "3px 10px", fontSize: 12, marginTop: 4 }}
+                onClick={annulerDecision} disabled={cmpBusy}>
+                Revenir sur ce choix
+              </button>
+            </div>
+          )}
+
+          {!rbDoute && dejaSaisi && (
+            <div style={{ fontSize: 12, color: MUTED, marginTop: 8, lineHeight: 1.5 }}>
+              Montants déjà enregistrés pour ce logement : ils sont conservés tels quels,
+              la reprise automatique ne les écrase pas.
+            </div>
+          )}
+
+          {rbDoute && (
+            <div style={{ background: "#fdf3e3", border: "2px solid #b45309", color: "#7c3f06", borderRadius: 8, padding: "10px 12px", marginTop: 8, fontSize: 13, lineHeight: 1.5 }}>
+              <div style={{ fontWeight: 800 }}>S'agit-il du même locataire ?</div>
+              <div style={{ marginTop: 6 }}>Ici : <b>{unit.tenant || "(vide)"}</b></div>
+              <div>Gestion Loyers : <b>{rbDoute.locataire}</b></div>
+              <div style={{ marginTop: 6 }}>
+                Garantie {fmtEUR(rbDoute.garantieMontant || 0)}
+                {rbDoute.retardLoyer ? " · retard loyer " + fmtEUR(rbDoute.retardLoyer) : ""}
+                {rbDoute.retardAssurance ? " · retard assurance " + fmtEUR(rbDoute.retardAssurance) : ""}
+              </div>
+              <div className="row" style={{ marginTop: 8 }}>
+                <button className="btn btn-accent" onClick={() => { enregistrerDecision(true); reprendreValeurs(rbDoute); setRbDoute(null); }}>
+                  Oui, reprendre ces montants
+                </button>
+                <button className="btn" onClick={() => { enregistrerDecision(false); setRbDoute(null); }}>
+                  Non
+                </button>
+              </div>
+              <div style={{ fontSize: 12, marginTop: 6 }}>Ta réponse est conservée : la question ne sera plus posée.</div>
+            </div>
+          )}
+
+          {CHAMPS_REMBOURSEMENT.map(champ => (
+            <ChampRemboursement key={champ.cle}
+              libelle={champ.libelle}
+              texte={rbTextes[champ.cle]}
+              valeurAffichee={valeurAffichee(champ)}
+              erreur={rbErreurs[champ.cle]}
+              onTexte={txt => saisirRemboursement(champ, txt)}
+              onSortie={() => quitterRemboursement(champ)} />
+          ))}
+
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 8, lineHeight: 1.5 }}>
+            Garantie − retard de loyer − retard d'assurance + décompte − dégâts.
+            Le décompte garde son signe : positif s'il vous est dû par vous, négatif si le locataire vous doit.
+            Videz le champ Décompte pour revenir à la valeur calculée ci-dessus.
+          </div>
+
+          <div className="between" style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: "12px 14px" }}>
+            <div style={{ fontWeight: 800, fontSize: 15 }}>TOTAL À REMBOURSER</div>
+            <MeterDigits value={(rbTotal < 0 ? "-" : "") + fmtEUR(Math.abs(rbTotal))} cls={rbTotal < 0 ? "red" : ""} />
+          </div>
+
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>
+            Ces montants sont conservés : pensez à « ☁️ Sauvegarde automatique OneDrive » avant de fermer l'application.
+          </div>
+        </div>
+      )}
+      {/* ===== MODULE REMBOURSEMENT — fin du panneau ===== */}
+    </>
+  );
+
+  if (unit.privateMeterOnly) {
+    return (
+      <div>
+        <div className="card">
+          <span className="label">Logement</span>
+          <select value={unitId} onChange={e => changerLogement(e.target.value)}>
+            {b.units.map(u => <option key={u.id} value={u.id}>{u.name} — {u.tenant || "Vacant"}</option>)}
+          </select>
+        </div>
+        <div className="card">
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>{unit.name} — compteur privé</div>
+          <div style={{ fontSize: 13, color: MUTED }}>
+            Ce logement dispose de son propre compteur électrique indépendant et n'est pas inclus dans les
+            décomptes de charges communes (eau, chauffage, nettoyage). Aucun décompte n'est calculé ici,
+            mais le remboursement de la garantie reste possible : le décompte vaut alors zéro.
+          </div>
+        </div>
+        <div className="card">
+          {blocRemboursement}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="card">
         <span className="label">Logement</span>
-        <select value={unitId} onChange={e => { setUnitId(e.target.value); setMoisNonPayesTexte(null); setErreurMoisNonPayes(null); setProvisionTexte(null); setErreurProvision(null); setRbOuvert(false); setRbTextes({}); setRbErreurs({}); setRbMsg(null); setElecConsoOverride(null); setEauConsoOverride(null); setMazoutCost(0); setIstaCost(0); setPeriodFromOverride(null); setPeriodToOverride(null); }}>
+        <select value={unitId} onChange={e => changerLogement(e.target.value)}>
           {b.units.map(u => <option key={u.id} value={u.id}>{u.name} — {u.tenant || "Vacant"}</option>)}
         </select>
       </div>
@@ -2899,56 +3417,8 @@ function DecomptesView({ data, setData, building }) {
           <button className="btn btn-accent" onClick={archive}><Save size={14} /> Archiver cette période</button>
         </div>
 
-        {/* ===== MODULE REMBOURSEMENT — boutons et panneau ===== */}
-        <div className="row" style={{ marginTop: 8 }}>
-          <button className="btn btn-primary" onClick={() => setRbOuvert(v => !v)}>
-            💶 {rbOuvert ? "Fermer le remboursement" : "Remboursement"}
-          </button>
-          <button className="btn btn-accent" onClick={enregistrerRemboursementWord} disabled={rbBusy}>
-            <Save size={14} /> {rbBusy ? "Envoi en cours…" : "Sauver remboursement"}
-          </button>
-        </div>
+        {blocRemboursement}
 
-        {rbMsg && (
-          <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, color: rbMsg.type === "ok" ? INK : "#b91c1c" }}>
-            {rbMsg.texte}
-          </div>
-        )}
-
-        {rbOuvert && (
-          <div style={{ marginTop: 12, background: PAPER, borderRadius: 10, padding: "12px 14px" }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>Remboursement de la garantie</div>
-            <div style={{ fontSize: 12, color: MUTED }}>
-              {unit.tenant || "Locataire"} — {periodLabel}
-            </div>
-
-            {CHAMPS_REMBOURSEMENT.map(champ => (
-              <ChampRemboursement key={champ.cle}
-                libelle={champ.libelle}
-                texte={rbTextes[champ.cle]}
-                valeurAffichee={valeurAffichee(champ)}
-                erreur={rbErreurs[champ.cle]}
-                onTexte={txt => saisirRemboursement(champ, txt)}
-                onSortie={() => quitterRemboursement(champ)} />
-            ))}
-
-            <div style={{ fontSize: 12, color: MUTED, marginTop: 8, lineHeight: 1.5 }}>
-              Garantie − retard de loyer − retard d'assurance + décompte − dégâts.
-              Le décompte garde son signe : positif s'il vous est dû par vous, négatif si le locataire vous doit.
-              Videz le champ Décompte pour revenir à la valeur calculée ci-dessus.
-            </div>
-
-            <div className="between" style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: "12px 14px" }}>
-              <div style={{ fontWeight: 800, fontSize: 15 }}>TOTAL À REMBOURSER</div>
-              <MeterDigits value={(rbTotal < 0 ? "-" : "") + fmtEUR(Math.abs(rbTotal))} cls={rbTotal < 0 ? "red" : ""} />
-            </div>
-
-            <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>
-              Ces montants sont conservés : pensez à « ☁️ Sauvegarde automatique OneDrive » avant de fermer l'application.
-            </div>
-          </div>
-        )}
-        {/* ===== MODULE REMBOURSEMENT — fin du panneau ===== */}
       </div>
 
       <div className="card">
