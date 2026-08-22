@@ -93,7 +93,7 @@ function UserPlus(p) { return <Icon {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 
 function EvolutionChart({ readings, dataKey, color, unitLabel }) {
   // Ce Hook doit rester AVANT tout return anticipe (regles des Hooks React).
   const [hover, setHover] = useState(null);
-  const data = readings.map(r => ({
+  const data = (readings || []).map(r => ({
     date: r[0], year: r[0] ? r[0].slice(0, 7) : "", value: dataKey === "cost" ? r[4] : r[3],
   })).filter(d => d.date);
   if (data.length < 2) return <div style={{ fontSize: 13, color: MUTED }}>Pas assez de données pour un graphique.</div>;
@@ -316,6 +316,14 @@ async function buildDocxBlob(buildingName, unitName, tenantName, period, lines, 
    Le decompte garde son signe (positif = du au locataire).
    ============================================================================ */
 
+// Les memes champs que le remboursement ordinaire, SANS le decompte.
+const CHAMPS_AUTRE_IMMEUBLE = [
+  { cle: "garantie", libelle: "Garantie locative (€)", negatifAutorise: false },
+  { cle: "retardLoyer", libelle: "Retard de loyer (€)", negatifAutorise: false },
+  { cle: "retardAssurance", libelle: "Retard d'assurance (€)", negatifAutorise: false },
+  { cle: "degats", libelle: "Dégâts locatifs (€)", negatifAutorise: false },
+];
+
 const CHAMPS_REMBOURSEMENT = [
   { cle: "garantie", libelle: "Garantie locative (€)", negatifAutorise: false },
   { cle: "retardLoyer", libelle: "Retard de loyer (€)", negatifAutorise: false },
@@ -396,6 +404,131 @@ async function buildRemboursementBlob(buildingName, unitName, tenantName, period
   zip.folder("docProps").file("app.xml", DOCX_APP);
   return zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
 }
+
+/* ---------------------------------------------------------------------------
+   AUTRES IMMEUBLES — Havre, Vannes, La Fermette, Egmont
+   Ces immeubles n'existent pas dans Charges & Compteurs : leurs locataires
+   ouvrent les compteurs a leur nom, il n'y a donc AUCUN decompte de charges.
+   Seul le remboursement de la garantie s'y applique :
+        total = garantie − retard loyer − retard assurance − degats
+   La liste des logements vient entierement de remboursements.json.
+   --------------------------------------------------------------------------- */
+
+// Immeubles du fichier qui ne sont PAS geres par cette application.
+const AUTRES_IMMEUBLES = ["havre", "vannes", "fermette", "egmont"];
+
+const NOM_AUTRE_IMMEUBLE = {
+  havre: "Havré", vannes: "Vannes", fermette: "La Fermette", egmont: "Egmont",
+};
+
+// Regroupe les locataires de ces quatre immeubles, dans l'ordre du fichier.
+function logementsAutresImmeubles(contenu) {
+  const parImmeuble = {};
+  for (const l of ((contenu && contenu.locataires) || [])) {
+    if (!AUTRES_IMMEUBLES.includes(l.immeubleId)) continue;
+    if (!l.locataire) continue;                 // logement inoccupe : rien a rembourser
+    if (!parImmeuble[l.immeubleId]) parImmeuble[l.immeubleId] = [];
+    parImmeuble[l.immeubleId].push(l);
+  }
+  return parImmeuble;
+}
+
+// Cle de conservation : immeuble + logement, SANS dates — ces logements n'ont
+// pas de periode de decompte.
+const cleAutre = (immeubleId, unite) => immeubleId + "|" + normaliserNomUnite(unite);
+
+// PAS de decompte dans cette formule : Gerard n'est pas responsable de ces charges.
+function totalAutreImmeuble(montants) {
+  const m = montants || {};
+  const total = (m.garantie || 0) - (m.retardLoyer || 0) - (m.retardAssurance || 0) - (m.degats || 0);
+  return Math.round(total * 100) / 100;
+}
+
+// Document Word SANS ligne « Décompte de charges ».
+function buildAutreDocxXml(immeubleNom, uniteNom, locataire, montants, total) {
+  const INK_HEX = "2E4E3F", PAPER_HEX = "F6F2EA", RED_HEX = "C0392B";
+  const m = montants || {};
+  const ligne = (libelle, montant, signe) => docxRow([
+    docxCell(libelle, { bold: true, align: "left" }),
+    docxCell((signe === "-" && montant > 0 ? "- " : "") + fmtEUR(Math.abs(montant))),
+  ]);
+
+  const titre = docxTable([
+    docxRow([
+      docxCell(immeubleNom.toUpperCase(), { bold: true, color: "FFFFFF", bg: INK_HEX, width: 3000 }),
+      docxCell(uniteNom.toUpperCase(), { bold: true, color: "FFFFFF", bg: INK_HEX, width: 3000 }),
+      docxCell((locataire || "").toUpperCase(), { bold: true, color: "FFFFFF", bg: INK_HEX, width: 3000 }),
+    ]),
+  ], { nCols: 3 });
+
+  const intro = docxPara("Décompte de remboursement de la garantie locative établi à la fin de la location. "
+    + "Les compteurs de ce logement étant ouverts au nom du locataire, aucun décompte de charges n'est établi.",
+    { size: 20, align: "both", spacingAfter: 200 });
+
+  const tableau = docxTable([
+    docxRow([
+      docxCell("Détail", { bold: true, color: "FFFFFF", bg: INK_HEX, align: "left" }),
+      docxCell("Montant", { bold: true, color: "FFFFFF", bg: INK_HEX }),
+    ]),
+    ligne("Garantie locative", m.garantie || 0),
+    ligne("Retard de loyer", m.retardLoyer || 0, "-"),
+    ligne("Retard d'assurance", m.retardAssurance || 0, "-"),
+    ligne("Dégâts locatifs", m.degats || 0, "-"),
+    docxRow([
+      docxCell("TOTAL À REMBOURSER", { bold: true, bg: PAPER_HEX, align: "left" }),
+      docxCell((total < 0 ? "- " : "") + fmtEUR(Math.abs(total)), { bold: true, bg: PAPER_HEX, color: total < 0 ? RED_HEX : "000000" }),
+    ]),
+  ], { nCols: 2 });
+
+  const note = docxPara("Un total négatif signifie que le locataire reste redevable de ce montant. "
+    + "Un total positif est à lui rembourser.", { size: 18, align: "both", spacingAfter: 120 });
+  const date = docxPara("Document établi le " + fmtDate(todayISO()), { size: 18 });
+
+  return titre + intro + tableau + note + date;
+}
+
+async function buildAutreBlob(immeubleNom, uniteNom, locataire, montants, total) {
+  const bodyXml = buildAutreDocxXml(immeubleNom, uniteNom, locataire, montants, total);
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>${bodyXml}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body>
+</w:document>`;
+  const zip = new window.JSZip();
+  zip.file("[Content_Types].xml", DOCX_CONTENT_TYPES);
+  zip.folder("_rels").file(".rels", DOCX_RELS);
+  zip.folder("word").file("document.xml", documentXml);
+  zip.folder("word").file("styles.xml", DOCX_STYLES);
+  zip.folder("word/_rels").file("document.xml.rels", DOCX_DOCUMENT_RELS);
+  zip.folder("docProps").file("core.xml", DOCX_CORE);
+  zip.folder("docProps").file("app.xml", DOCX_APP);
+  return zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+}
+
+// Meme dossier et meme action Make que les decomptes : SAUVEGARDE DECOMPTES,
+// annee / immeuble / logement. Aucune modification du scenario Make.
+async function saveAutreOneDrive(immeubleNom, uniteNom, locataire, montants, total) {
+  const year = String(new Date().getFullYear());
+  const immeubleClean = cleanPath(immeubleNom);
+  const uniteClean = cleanPath(uniteNom);
+  const locataireClean = cleanPath(locataire || "Locataire");
+  const folderPath = year + "/" + immeubleClean + "/" + uniteClean;
+  const filename = "Remboursement_" + immeubleClean + "_" + uniteClean + "_" + locataireClean + "_" + year + ".docx";
+  const blob = await buildAutreBlob(immeubleNom, uniteNom, locataire, montants, total);
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+  const response = await fetch(WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "save_decompte_auto", folderPath, filename, data: base64 })
+  });
+  if (!response.ok) throw new Error("Erreur Make.com : " + response.status);
+  return { folderPath, filename };
+}
+/* ===== AUTRES IMMEUBLES — fin des fonctions ============================== */
 
 // Meme dossier et meme action Make que le decompte (save_decompte_auto) :
 // AUCUNE modification du scenario Make n'est necessaire, seul le nom change.
@@ -626,6 +759,8 @@ const TEXT = "#2B2B28";
 const MUTED = "#8A8478";
 const LINE = "#E4DDD0";
 const SABLE = "#EDE0C8";      // beige sable, bouton de comparaison
+const BLEU_PASTEL = "#D9E3EC";  // bleu-gris pastel, bouton Autres immeubles
+const BLEU_PASTEL_BORD = "#B9CBD9";
 const SABLE_BORD = "#DCC9A6";
 
 const GlobalStyle = () => (
@@ -1139,7 +1274,7 @@ function App() {
           if (response.ok) {
             const text = await response.text();
             const decoded = decodeURIComponent(escape(atob(text.trim())));
-            const parsed = JSON.parse(decoded);
+            const parsed = garantirStructure(JSON.parse(decoded));
             if (parsed.buildings && parsed.meters) {
               // un import n'est pas une modification : ne pas declencher
               // "modifications en attente" juste apres un Réessayer reussi
@@ -1277,7 +1412,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v22";
+const APP_VERSION = "v29";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1429,6 +1564,59 @@ function AideView() {
         Le locataire doit toujours 100 €/mois — il en a simplement payé moins.</p>
       </Section>
 
+      <Section titre="Le remboursement de la garantie">
+        Dans l'onglet <b>Décomptes</b>, sous le décompte, le bouton <b>💶 Remboursement</b> ouvre un
+        panneau qui va chercher tout seul, dans Gestion Loyers, la <b>garantie</b>, le <b>retard de loyer</b>
+        et le <b>retard d'assurance</b> du locataire. Tu n'as que les <b>dégâts locatifs</b> à saisir.
+        <div style={{ marginTop: 8 }}>
+          Le calcul : garantie − retard de loyer − retard d'assurance + décompte − dégâts.
+          Un total <b>positif</b> est à rembourser au locataire, un total <b>négatif</b> (affiché en rouge)
+          signifie qu'il te doit encore ce montant.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Si les deux applications n'ont pas le même nom pour ce logement, l'application <b>te pose la
+          question</b> avant de reprendre quoi que ce soit. Ta réponse est conservée : elle ne te sera
+          plus jamais redemandée pour ce logement.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <b>« Sauver remboursement »</b> ne fait que le document Word. Les montants, eux, ne sont
+          enregistrés que par le bouton habituel de sauvegarde OneDrive — comme tout le reste.
+        </div>
+      </Section>
+
+      <Section titre="Comparer les noms avec Gestion Loyers">
+        Le bouton beige <b>🔗 Comparer les noms avec GL</b> affiche les <b>50 logements</b> des sept
+        immeubles, avec le locataire connu ici et celui connu par Gestion Loyers.
+        <div style={{ marginTop: 8 }}>
+          <b style={{ color: INK }}>Vert</b> : les deux noms concordent, rien à faire.<br />
+          <b style={{ color: "#b45309" }}>Orange</b> : les noms se ressemblent sans être identiques —
+          la question te sera posée à l'ouverture du remboursement.<br />
+          <b style={{ color: "#b91c1c" }}>Rouge</b> : locataires différents, donc un vrai changement.
+          Aucun montant n'est repris automatiquement dans ce cas.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Cet écran ne modifie <b>rien</b> : il ne sert qu'à constater.
+        </div>
+      </Section>
+
+      <Section titre="Les autres immeubles (Havré, Vannes, La Fermette, Egmont)">
+        Ces quatre immeubles n'ont <b>pas de décompte de charges</b> : leurs locataires ouvrent les
+        compteurs à leur nom. Seule la garantie est à régler.
+        <div style={{ marginTop: 8 }}>
+          Le bouton bleu <b>🏢 Autres immeubles</b> ouvre un panneau où tu choisis l'immeuble puis le
+          logement, parmi les <b>14 locataires</b> connus de Gestion Loyers. Garantie et retards sont
+          préremplis, les dégâts sont à saisir.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Le calcul est plus court, sans décompte : garantie − retard de loyer − retard d'assurance − dégâts.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <b>« Voir le document »</b> affiche l'aperçu à l'écran. <b>« Enregistrer le document »</b> dépose
+          le Word dans SAUVEGARDE DECOMPTES, à côté des décomptes. Là encore, les montants saisis ne
+          sont enregistrés que par le bouton de sauvegarde OneDrive.
+        </div>
+      </Section>
+
       <Section titre="Si quelque chose semble anormal">
         <p style={{ marginTop: 0 }}><b>Les noms de locataires ne sont pas les bons</b> → n'enregistre surtout rien.
         Ferme l'application et préviens papa. Enregistrer propagerait l'erreur partout.</p>
@@ -1492,6 +1680,19 @@ function getLastSync() { try { return localStorage.getItem("charges-last-sync");
    ferait disparaitre son travail sans le moindre message.
    ------------------------------------------------------------ */
 let snapshotOneDrive = null;
+// Garantit la structure minimale attendue par l'application. Un compteur sans
+// tableau de releves — fichier abime, edition a la main — faisait planter
+// l'ecran au lieu d'afficher quoi que ce soit.
+function garantirStructure(d) {
+  if (!d || typeof d !== "object") return d;
+  if (Array.isArray(d.meters)) {
+    for (const m of d.meters) {
+      if (!Array.isArray(m.readings)) m.readings = [];
+    }
+  }
+  return d;
+}
+
 const normaliser = (obj) => JSON.stringify(obj); // compare le contenu, pas la mise en forme
 function definirSnapshotOneDrive(objet) { try { snapshotOneDrive = normaliser(objet); } catch (e) { snapshotOneDrive = null; } }
 
@@ -1585,6 +1786,15 @@ const cleAjustement = (building, unitId, from, to) => `${building}|${unitId}|${f
 // distinguer "champ vide" de "saisie invalide" et provoquerait un
 // enregistrement silencieux de 0. On lit donc du texte et on valide nous-memes.
 // La virgule est acceptee (clavier decimal francais).
+// Un montant en euros n'a jamais plus de deux decimales : on arrondit des la
+// saisie, sinon les lignes d'un document ne collent plus a son total.
+// 1,005 × 100 vaut 100,49999999999999 en machine : un arrondi naif donnerait
+// 1,00 au lieu de 1,01. On remet le nombre a une precision utile avant d'arrondir.
+const auCentime = (n) => {
+  if (typeof n !== "number" || !isFinite(n)) return 0;
+  return Math.round(Number((n * 100).toPrecision(12))) / 100;
+};
+
 const analyserNombre = (txt) => {
   const brut = String(txt).trim().replace(",", ".");
   if (brut === "") return { vide: true, valide: false, valeur: null };
@@ -1690,7 +1900,7 @@ function BackupBar({ data, setData }) {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const parsed = JSON.parse(String(reader.result));
+        const parsed = garantirStructure(JSON.parse(String(reader.result)));
         if (!parsed.buildings || !parsed.meters) throw new Error("Format de fichier inattendu");
         setData(parsed);
         flash("ok", "✓ Données importées");
@@ -2576,6 +2786,20 @@ function DecomptesView({ data, setData, building }) {
   const [cmpOuvert, setCmpOuvert] = useState(false);
   const [rbDoute, setRbDoute] = useState(null); // entree en attente de confirmation
   const [rbInfo, setRbInfo] = useState(null);  // explication quand rien n'est repris
+  // Verrous SYNCHRONES : un etat React n'est mis a jour qu'au rendu suivant, donc
+  // deux appuis rapproches passaient tous les deux et envoyaient DEUX documents.
+  const verrouEnvoi = useRef(false);
+  const verrouLecture = useRef(false);
+  const verrouEnvoiAutre = useRef(false);
+  // --- AUTRES IMMEUBLES ---
+  const [autOuvert, setAutOuvert] = useState(false);
+  const [autImmeuble, setAutImmeuble] = useState("");
+  const [autUnite, setAutUnite] = useState("");
+  const [autTextes, setAutTextes] = useState({});
+  const [autErreurs, setAutErreurs] = useState({});
+  const [autApercu, setAutApercu] = useState(false);
+  const [autMsg, setAutMsg] = useState(null);
+  const [autBusy, setAutBusy] = useState(false);
   const [cmpBusy, setCmpBusy] = useState(false);
   const [cmpErreur, setCmpErreur] = useState(null);
   const [cmpContenu, setCmpContenu] = useState(null);
@@ -2590,8 +2814,23 @@ function DecomptesView({ data, setData, building }) {
   const [periodFromOverride, setPeriodFromOverride] = useState(null);
   const [periodToOverride, setPeriodToOverride] = useState(null);
 
+  // DEFAUT 4 : il existe DEUX selecteurs de logement dans cette vue (le second
+  // s'affiche pour un logement a compteur prive, comme le RDC Commercial de PTG)
+  // et le second ne remettait RIEN a zero — ni les saisies du decompte, ni le
+  // mazout, ni l'ISTA, ni les dates forcees, ni le panneau Remboursement.
+  // Les deux passent desormais par la meme fonction.
+  const changerLogement = (id) => {
+    setUnitId(id);
+    setMoisNonPayesTexte(null); setErreurMoisNonPayes(null); setProvisionTexte(null); setErreurProvision(null); setRbOuvert(false); setRbTextes({}); setRbErreurs({}); setRbMsg(null); setCmpOuvert(false); setRbDoute(null); setCmpErreur(null); setRbInfo(null); setAutOuvert(false); setAutApercu(false); setAutMsg(null); setElecConsoOverride(null); setEauConsoOverride(null); setMazoutCost(0); setIstaCost(0); setPeriodFromOverride(null); setPeriodToOverride(null);
+  };
+
+  // DEFAUT 16 : changer d'onglet d'immeuble appelait setUnitId DIRECTEMENT, sans
+  // rien remettre a zero — la periode forcee, le mazout, l'ISTA et les
+  // consommations forcees passaient d'un immeuble a l'autre et faussaient le
+  // decompte, en silence. C'etait le TROISIEME chemin de changement de logement.
+  // Il passe desormais par la meme fonction que les deux selecteurs.
   useEffect(() => {
-    if (!b.units.find(x => x.id === unitId)) setUnitId(b.units[0]?.id);
+    if (!b.units.find(x => x.id === unitId)) changerLogement(b.units[0]?.id);
   }, [building]);
 
   if (!unit) return null;
@@ -2601,15 +2840,6 @@ function DecomptesView({ data, setData, building }) {
   // l'utilise. Cliquer sur ce selecteur levait « Cannot access
   // changerLogement before initialization » : l'application plantait.
   // Elle est desormais declaree avant les deux selecteurs.
-  // DEFAUT 4 : il existe DEUX selecteurs de logement dans cette vue (le second
-  // s'affiche pour un logement a compteur prive, comme le RDC Commercial de PTG)
-  // et le second ne remettait RIEN a zero — ni les saisies du decompte, ni le
-  // mazout, ni l'ISTA, ni les dates forcees, ni le panneau Remboursement.
-  // Les deux passent desormais par la meme fonction.
-  const changerLogement = (id) => {
-    setUnitId(id);
-    setMoisNonPayesTexte(null); setErreurMoisNonPayes(null); setProvisionTexte(null); setErreurProvision(null); setRbOuvert(false); setRbTextes({}); setRbErreurs({}); setRbMsg(null); setCmpOuvert(false); setRbDoute(null); setCmpErreur(null); setRbInfo(null); setElecConsoOverride(null); setEauConsoOverride(null); setMazoutCost(0); setIstaCost(0); setPeriodFromOverride(null); setPeriodToOverride(null);
-  };
 
 
 
@@ -2768,6 +2998,11 @@ function DecomptesView({ data, setData, building }) {
       if (!next.archives) next.archives = {};
       if (!next.archives[building]) next.archives[building] = {};
       if (!next.archives[building][unitId]) next.archives[building][unitId] = [];
+      // Un second appui sur « Archiver » remplace l'entree de la meme periode
+      // plutot que d'en creer une identique a cote.
+      const memePeriode = next.archives[building][unitId]
+        .findIndex(a => a.from === periodFrom && a.to === periodTo);
+      if (memePeriode >= 0) next.archives[building][unitId].splice(memePeriode, 1);
       next.archives[building][unitId].push({
         tenant: unit.tenant, from: periodFrom, to: periodTo,
         mazout: { cost: firstLineCost, isIsta: !!unit.hasIsta },
@@ -2775,6 +3010,15 @@ function DecomptesView({ data, setData, building }) {
         eau: { conso: eauConso, cost: eauCost, days },
         total, provision, diff, days, createdAt: todayISO(),
         moisPeriode: provisionMonths, moisNonPayes, provisionForcee,
+        // le remboursement de la garantie, s'il a ete prepare pour cette periode
+        remboursement: dejaSaisi ? {
+          garantie: remb.garantie || 0,
+          retardLoyer: remb.retardLoyer || 0,
+          retardAssurance: remb.retardAssurance || 0,
+          decompte: rbDecompte,
+          degats: remb.degats || 0,
+          total: rbTotal,
+        } : null,
       });
       return next;
     });
@@ -2832,7 +3076,7 @@ function DecomptesView({ data, setData, building }) {
       setRbErreurs(prev => ({ ...prev, [champ.cle]: "Ce montant ne peut pas être négatif." })); return;
     }
     setRbErreurs(prev => ({ ...prev, [champ.cle]: null }));
-    majRemboursement({ [champ.cle]: r.valeur });
+    majRemboursement({ [champ.cle]: auCentime(r.valeur) });
   };
 
   // En quittant un champ laisse vide, on relache le texte local pour que la
@@ -2849,6 +3093,8 @@ function DecomptesView({ data, setData, building }) {
 
   // --- LECTURE DE GESTION LOYERS : partagee par le panneau et la comparaison ---
   const lireGestionLoyers = async () => {
+    if (verrouLecture.current) return cmpContenu;   // lecture deja en cours
+    verrouLecture.current = true;
     setCmpBusy(true); setCmpErreur(null);
     try {
       const contenu = await lireRemboursementsGestionLoyers();
@@ -2858,7 +3104,7 @@ function DecomptesView({ data, setData, building }) {
       setCmpContenu(null); setCmpErreur(e.message);
       return null;
     } finally {
-      setCmpBusy(false);
+      setCmpBusy(false); verrouLecture.current = false;
     }
   };
 
@@ -2870,9 +3116,9 @@ function DecomptesView({ data, setData, building }) {
   // Ecrit les montants venant de Gestion Loyers dans le panneau.
   const reprendreValeurs = (gl) => {
     const patch = {
-      garantie: gl.garantieMontant || 0,
-      retardLoyer: gl.retardLoyer || 0,
-      retardAssurance: gl.retardAssurance || 0,
+      garantie: auCentime(gl.garantieMontant || 0),
+      retardLoyer: auCentime(gl.retardLoyer || 0),
+      retardAssurance: auCentime(gl.retardAssurance || 0),
     };
     // N'ECRIT QUE SI QUELQUE CHOSE CHANGE REELLEMENT : sinon, ouvrir le
     // panneau pour regarder suffirait a marquer le fichier comme modifie.
@@ -2933,9 +3179,101 @@ function DecomptesView({ data, setData, building }) {
     reprendreValeurs(ligne.gl);
   };
 
+  /* ===== AUTRES IMMEUBLES : logique ===================================== */
+  const autParImmeuble = cmpContenu ? logementsAutresImmeubles(cmpContenu) : null;
+  const autListe = (autParImmeuble && autParImmeuble[autImmeuble]) || [];
+  const autEntree = autListe.find(l => l.unite === autUnite) || null;
+  const autCle = autEntree ? cleAutre(autImmeuble, autEntree.unite) : null;
+  const autMontants = (autCle && data.remboursementsAutres && data.remboursementsAutres[autCle]) || {};
+  const autTotal = totalAutreImmeuble(autMontants);
+
+  // La lecture est une fonction A PART : « Réessayer » doit relire, pas
+  // refermer le panneau (defaut deja corrige cote Remboursement, reproduit ici).
+  const lireListeAutres = async () => {
+    setAutMsg(null);
+    const frais = cmpContenu && (Date.now() - cmpLuA) < FRAICHEUR_LISTE_MS;
+    if (!frais || cmpErreur) await lireGestionLoyers();
+  };
+
+  const ouvrirAutres = async () => {
+    if (autOuvert) { setAutOuvert(false); return; }
+    // DEFAUT 15 : les deux panneaux pouvaient rester ouverts en meme temps,
+    // avec DEUX blocs « TOTAL À REMBOURSER » a l'ecran portant sur des
+    // logements differents. Ouvrir l'un referme desormais l'autre.
+    setRbOuvert(false); setRbDoute(null); setRbInfo(null);
+    setAutOuvert(true); setAutApercu(false);
+    await lireListeAutres();
+  };
+
+  const majAutre = (cle, patch) => {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.remboursementsAutres) next.remboursementsAutres = {};
+      const actuel = next.remboursementsAutres[cle] || {};
+      next.remboursementsAutres[cle] = { ...actuel, ...patch };
+      return next;
+    });
+  };
+
+  // Choix d'un logement : preremplissage depuis Gestion Loyers, SAUF si des
+  // montants ont deja ete saisis — le travail de Gerard prime toujours.
+  const choisirUniteAutre = (unite) => {
+    setAutUnite(unite); setAutTextes({}); setAutErreurs({}); setAutApercu(false); setAutMsg(null);
+    const entree = autListe.find(l => l.unite === unite);
+    if (!entree) return;
+    const cle = cleAutre(autImmeuble, entree.unite);
+    const deja = (data.remboursementsAutres && data.remboursementsAutres[cle]) || {};
+    const dejaSaisiAutre = deja.garantie !== undefined || deja.retardLoyer !== undefined
+      || deja.retardAssurance !== undefined || deja.degats !== undefined;
+    if (dejaSaisiAutre) return;
+    const patch = {
+      garantie: auCentime(entree.garantieMontant || 0),
+      retardLoyer: auCentime(entree.retardLoyer || 0),
+      retardAssurance: auCentime(entree.retardAssurance || 0),
+    };
+    // On n'ecrit que si quelque chose change vraiment : consulter n'est pas modifier.
+    const identique = Object.keys(patch).every(k => (deja[k] || 0) === patch[k]);
+    if (!identique) majAutre(cle, patch);
+  };
+
+  const saisirAutre = (champ, txt) => {
+    setAutTextes(prev => ({ ...prev, [champ.cle]: txt }));
+    if (!autCle) return;
+    const r = analyserNombre(txt);
+    if (r.vide) { setAutErreurs(prev => ({ ...prev, [champ.cle]: null })); majAutre(autCle, { [champ.cle]: 0 }); return; }
+    if (/^-?[.,]?$/.test(txt.trim())) { setAutErreurs(prev => ({ ...prev, [champ.cle]: null })); return; }
+    if (!r.valide) { setAutErreurs(prev => ({ ...prev, [champ.cle]: "Montant invalide." })); return; }
+    if (r.valeur < 0) { setAutErreurs(prev => ({ ...prev, [champ.cle]: "Ce montant ne peut pas être négatif." })); return; }
+    setAutErreurs(prev => ({ ...prev, [champ.cle]: null }));
+    majAutre(autCle, { [champ.cle]: auCentime(r.valeur) });
+  };
+
+  const quitterAutre = (champ) => {
+    const t = autTextes[champ.cle];
+    if (t !== null && t !== undefined && analyserNombre(t).vide) {
+      setAutTextes(prev => ({ ...prev, [champ.cle]: null }));
+    }
+  };
+
+  const enregistrerAutreWord = async () => {
+    if (!autEntree || verrouEnvoiAutre.current) return;   // deuxieme appui : ignore
+    verrouEnvoiAutre.current = true;
+    setAutBusy(true); setAutMsg(null);
+    try {
+      const res = await saveAutreOneDrive(NOM_AUTRE_IMMEUBLE[autImmeuble] || autImmeuble,
+        autEntree.unite, autEntree.locataire, autMontants, autTotal);
+      setAutMsg({ type: "ok", texte: "✓ Document enregistré : " + res.folderPath + "/" + res.filename });
+    } catch (e) {
+      setAutMsg({ type: "err", texte: "Échec : " + e.message });
+    } finally {
+      setAutBusy(false); verrouEnvoiAutre.current = false;
+    }
+  };
+
   // Ouverture du panneau : bascule, puis lecture.
   const ouvrirRemboursement = async () => {
     if (rbOuvert) { setRbOuvert(false); return; }
+    setAutOuvert(false); setAutApercu(false);   // un seul panneau ouvert a la fois
     setRbOuvert(true);
     await reprendreDepuisFichier();
   };
@@ -2957,6 +3295,17 @@ function DecomptesView({ data, setData, building }) {
   };
 
   const enregistrerRemboursementWord = async () => {
+    if (verrouEnvoi.current) return;            // deuxieme appui rapproche : ignore
+    // Rien n'a encore ete prepare pour ce logement : on ouvre le panneau, on va
+    // chercher les montants, et on demande une confirmation. Sans ce garde-fou,
+    // un document a zero partait sur OneDrive en annoncant « enregistré ».
+    if (!rbOuvert && !dejaSaisi) {
+      setRbOuvert(true); setAutOuvert(false);
+      await reprendreDepuisFichier();
+      setRbMsg({ type: "err", texte: "Vérifie les montants ci-dessous, puis appuie de nouveau sur « Sauver remboursement »." });
+      return;
+    }
+    verrouEnvoi.current = true;
     setRbBusy(true); setRbMsg(null);
     try {
       const res = await saveRemboursementOneDrive(b.name, unit.name, unit.tenant || "Locataire", periodLabel, remb, rbDecompte, rbTotal);
@@ -2964,7 +3313,7 @@ function DecomptesView({ data, setData, building }) {
     } catch (e) {
       setRbMsg({ type: "err", texte: "Échec : " + e.message });
     } finally {
-      setRbBusy(false);
+      setRbBusy(false); verrouEnvoi.current = false;
     }
   };
 
@@ -3018,6 +3367,165 @@ function DecomptesView({ data, setData, building }) {
           <Save size={14} /> {rbBusy ? "Envoi en cours…" : "Sauver remboursement"}
         </button>
       </div>
+
+      {/* Bouton centre, en bleu-gris pastel : les quatre immeubles sans decompte. */}
+      <div style={{ marginTop: 8, display: "flex", justifyContent: "center" }}>
+        <button className="btn" onClick={ouvrirAutres} disabled={cmpBusy && !autOuvert}
+          style={{
+            width: "66%", justifyContent: "center", textAlign: "center",
+            background: BLEU_PASTEL, borderColor: BLEU_PASTEL_BORD, color: INK, fontWeight: 700,
+          }}>
+          🏢 {(cmpBusy && !autOuvert) ? "Lecture…" : (autOuvert ? "Fermer les autres immeubles" : "Autres immeubles")}
+        </button>
+      </div>
+
+      {autOuvert && (
+        <div style={{ marginTop: 12, background: PAPER, borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>Remboursement — autres immeubles</div>
+          <div style={{ fontSize: 12, color: MUTED, marginBottom: 8, lineHeight: 1.5 }}>
+            Havré, Vannes, La Fermette et Egmont : les compteurs sont ouverts au nom du locataire,
+            il n'y a donc aucun décompte de charges. Seule la garantie est calculée.
+          </div>
+
+          {cmpErreur ? (
+            <div>
+              <div style={{ background: "#b91c1c", color: "#fff", borderRadius: 8, padding: "10px 12px", fontSize: 13.5, lineHeight: 1.5 }}>
+                Pas de connexion — impossible de lire la liste de Gestion Loyers : {cmpErreur}
+              </div>
+              <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={lireListeAutres} disabled={cmpBusy}>
+                🔄 Réessayer
+              </button>
+            </div>
+          ) : !autParImmeuble ? (
+            <div style={{ fontSize: 13, color: MUTED }}>Lecture en cours…</div>
+          ) : (
+            <div>
+              <span className="label">Immeuble</span>
+              <select value={autImmeuble} onChange={e => {
+                setAutImmeuble(e.target.value); setAutUnite(""); setAutTextes({});
+                setAutErreurs({}); setAutApercu(false); setAutMsg(null);
+              }}>
+                <option value="">— choisir —</option>
+                {AUTRES_IMMEUBLES.filter(id => (autParImmeuble[id] || []).length > 0).map(id => (
+                  <option key={id} value={id}>
+                    {NOM_AUTRE_IMMEUBLE[id]} ({autParImmeuble[id].length})
+                  </option>
+                ))}
+              </select>
+
+              {autImmeuble && (
+                <div style={{ marginTop: 10 }}>
+                  <span className="label">Logement</span>
+                  <select value={autUnite} onChange={e => choisirUniteAutre(e.target.value)}>
+                    <option value="">— choisir —</option>
+                    {autListe.map(l => (
+                      <option key={l.unite} value={l.unite}>{l.unite} — {l.locataire}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {autEntree && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontWeight: 700 }}>{autEntree.locataire}</div>
+                  <div style={{ fontSize: 12, color: MUTED }}>
+                    {NOM_AUTRE_IMMEUBLE[autImmeuble]} — {autEntree.unite}
+                  </div>
+
+                  {CHAMPS_AUTRE_IMMEUBLE.map(champ => (
+                    <ChampRemboursement key={champ.cle}
+                      libelle={champ.libelle}
+                      texte={autTextes[champ.cle]}
+                      valeurAffichee={autMontants[champ.cle] || 0}
+                      erreur={autErreurs[champ.cle]}
+                      onTexte={txt => saisirAutre(champ, txt)}
+                      onSortie={() => quitterAutre(champ)} />
+                  ))}
+
+                  <div style={{ fontSize: 12, color: MUTED, marginTop: 8, lineHeight: 1.5 }}>
+                    Garantie − retard de loyer − retard d'assurance − dégâts.
+                    Garantie et retards viennent de Gestion Loyers ; les dégâts sont à saisir.
+                  </div>
+
+                  <div className="between" style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: "12px 14px" }}>
+                    <div style={{ fontWeight: 800, fontSize: 15 }}>TOTAL À REMBOURSER</div>
+                    <MeterDigits value={(autTotal < 0 ? "-" : "") + fmtEUR(Math.abs(autTotal))} cls={autTotal < 0 ? "red" : ""} />
+                  </div>
+
+                  <div className="row" style={{ marginTop: 10 }}>
+                    <button className="btn btn-primary" onClick={() => setAutApercu(v => !v)}>
+                      <FileText size={14} /> {autApercu ? "Fermer l'aperçu" : "Voir le document"}
+                    </button>
+                    <button className="btn btn-accent" onClick={enregistrerAutreWord} disabled={autBusy}>
+                      <Save size={14} /> {autBusy ? "Envoi en cours…" : "Enregistrer le document"}
+                    </button>
+                  </div>
+
+                  {autMsg && (
+                    <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, color: autMsg.type === "ok" ? INK : "#b91c1c" }}>
+                      {autMsg.texte}
+                    </div>
+                  )}
+
+                  {autApercu && (
+                    <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: "14px 16px" }}>
+                      <div style={{ fontWeight: 800, marginBottom: 2 }}>
+                        {NOM_AUTRE_IMMEUBLE[autImmeuble]} — {autEntree.unite}
+                      </div>
+                      <div style={{ fontWeight: 700, marginBottom: 8 }}>{autEntree.locataire}</div>
+                      <div style={{ fontSize: 12.5, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
+                        Les compteurs de ce logement étant ouverts au nom du locataire,
+                        aucun décompte de charges n'est établi.
+                      </div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
+                        <tbody>
+                          <tr style={{ borderTop: "1px solid " + LINE }}>
+                            <td style={{ padding: "6px 4px" }}>Garantie locative</td>
+                            <td style={{ padding: "6px 4px", textAlign: "right" }}>{fmtEUR(autMontants.garantie || 0)}</td>
+                          </tr>
+                          <tr style={{ borderTop: "1px solid " + LINE }}>
+                            <td style={{ padding: "6px 4px" }}>Retard de loyer</td>
+                            <td style={{ padding: "6px 4px", textAlign: "right" }}>
+                              {(autMontants.retardLoyer || 0) > 0 ? "- " : ""}{fmtEUR(autMontants.retardLoyer || 0)}
+                            </td>
+                          </tr>
+                          <tr style={{ borderTop: "1px solid " + LINE }}>
+                            <td style={{ padding: "6px 4px" }}>Retard d'assurance</td>
+                            <td style={{ padding: "6px 4px", textAlign: "right" }}>
+                              {(autMontants.retardAssurance || 0) > 0 ? "- " : ""}{fmtEUR(autMontants.retardAssurance || 0)}
+                            </td>
+                          </tr>
+                          <tr style={{ borderTop: "1px solid " + LINE }}>
+                            <td style={{ padding: "6px 4px" }}>Dégâts locatifs</td>
+                            <td style={{ padding: "6px 4px", textAlign: "right" }}>
+                              {(autMontants.degats || 0) > 0 ? "- " : ""}{fmtEUR(autMontants.degats || 0)}
+                            </td>
+                          </tr>
+                          <tr style={{ borderTop: "2px solid " + INK, background: PAPER }}>
+                            <td style={{ padding: "8px 4px", fontWeight: 800 }}>TOTAL À REMBOURSER</td>
+                            <td style={{ padding: "8px 4px", textAlign: "right", fontWeight: 800, color: autTotal < 0 ? "#b91c1c" : INK }}>
+                              {(autTotal < 0 ? "- " : "") + fmtEUR(Math.abs(autTotal))}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      <div style={{ fontSize: 12, color: MUTED, marginTop: 10, lineHeight: 1.5 }}>
+                        Un total négatif signifie que le locataire reste redevable de ce montant.
+                        Un total positif est à lui rembourser.
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ fontSize: 12, color: MUTED, marginTop: 10, lineHeight: 1.5 }}>
+                    Ces montants sont conservés : pensez à « ☁️ Sauvegarde automatique OneDrive »
+                    avant de fermer l'application.
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Bouton centre, en beige sable : il se distingue des deux rangees
           d'actions au-dessus sans jurer avec la palette de l'application. */}
@@ -3084,7 +3592,7 @@ function DecomptesView({ data, setData, building }) {
                           return (
                             <tr key={i} style={{ borderTop: "1px solid " + LINE, color: couleur }}>
                               <td style={{ padding: "5px" }}>{r.unite ? r.unite.name : r.gl.unite}</td>
-                              <td style={{ padding: "5px" }}>{r.dansApp ? (r.unite.tenant || "—") : <i>pas dans cette app</i>}</td>
+                              <td style={{ padding: "5px" }}>{r.dansApp ? (r.unite.tenant || "—") : <i style={{ color: MUTED }}>pas de décompte · voir « Autres immeubles »</i>}</td>
                               <td style={{ padding: "5px" }}>{r.gl.locataire}</td>
                               <td style={{ padding: "5px", textAlign: "right" }}>{r.gl.garantieMontant ? fmtEUR(r.gl.garantieMontant) : "—"}</td>
                               <td style={{ padding: "5px", textAlign: "right" }}>{r.gl.retardLoyer ? fmtEUR(r.gl.retardLoyer) : "—"}</td>
