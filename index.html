@@ -313,6 +313,17 @@ async function buildDocxBlob(buildingName, unitName, tenantName, period, lines, 
    n'en modifie aucune. Il reutilise seulement les briques deja globales
    (docxTable/docxRow/docxCell/docxPara, fmtEUR, cleanPath, WEBHOOK_URL).
    Calcul : total = garantie − retard loyer − retard assurance + decompte − degats
+
+   Sens des grandeurs (Gestion Loyers v85 et suivantes) :
+     garantie        <- garantieEncaissee : ce qui a ete REELLEMENT recu du
+                        locataire, et non garantieMontant (le montant du au
+                        contrat). Repli sur garantieMontant pour les anciens
+                        fichiers remboursements.json.
+     retardAssurance <- restant du d'assurance, et non plus la prime entiere.
+     decompte        <- valeur SIGNEE, donc TOUJOURS ADDITIONNEE :
+                        positive quand le bailleur doit au locataire
+                        (trop-percu de provisions), negative quand le locataire
+                        doit des charges. Ne jamais inverser ce signe.
    Le decompte garde son signe (positif = du au locataire).
    ============================================================================ */
 
@@ -1412,7 +1423,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v29";
+const APP_VERSION = "v31";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1615,6 +1626,83 @@ function AideView() {
           le Word dans SAUVEGARDE DECOMPTES, à côté des décomptes. Là encore, les montants saisis ne
           sont enregistrés que par le bouton de sauvegarde OneDrive.
         </div>
+      </Section>
+
+      <Section titre="D'où viennent les montants : la chaîne Gestion Loyers → Charges &amp; Compteurs">
+        <p style={{ marginTop: 0 }}>
+          Les garanties, les retards de loyer et les retards d'assurance ne se saisissent <b>pas</b> ici.
+          Ils sont tenus à jour dans l'autre application, <b>Gestion Loyers</b>, et voyagent jusqu'ici
+          par un fichier déposé sur OneDrive.
+        </p>
+
+        <p style={{ fontWeight: 700, marginBottom: 4 }}>Les trois étapes, dans l'ordre</p>
+        <ol style={{ paddingLeft: 18, marginTop: 0 }}>
+          <li style={{ marginBottom: 6 }}>
+            Dans <b>Gestion Loyers</b>, tu saisis pour chaque logement le montant de la garantie,
+            ce qui a déjà été payé, et la même chose pour l'assurance.
+          </li>
+          <li style={{ marginBottom: 6 }}>
+            Toujours dans Gestion Loyers : bouton <b>📋 Liste remboursement</b>, puis, au-dessus du
+            tableau qui s'affiche, bouton vert <b>📤 Enregistrer sur OneDrive</b>. Un fichier est
+            déposé dans <i>Immobilier 2025-2026 › AGestion Charges › Calcul charges et compteurs</i>.
+          </li>
+          <li style={{ marginBottom: 0 }}>
+            Ici, dans Charges &amp; Compteurs : <b>il n'y a aucun bouton à cliquer pour charger.</b>
+            Le fichier est lu tout seul dès que tu ouvres <b>💶 Remboursement</b> ou
+            <b> 🏢 Autres immeubles</b>. Les montants apparaissent déjà remplis.
+          </li>
+        </ol>
+
+        <p style={{ fontWeight: 700, marginBottom: 4, marginTop: 14 }}>Si les montants semblent périmés</p>
+        <p style={{ marginTop: 0 }}>
+          Le fichier est gardé en mémoire quelques minutes pour éviter de le relire à chaque clic.
+          Si tu viens de l'exporter depuis Gestion Loyers et que les anciens montants s'affichent
+          encore : referme le panneau, rouvre-le. Si ça ne suffit pas, recharge la page.
+        </p>
+
+        <p style={{ fontWeight: 700, marginBottom: 4, marginTop: 14 }}>Garantie encaissée, pas garantie due</p>
+        <p style={{ marginTop: 0 }}>
+          Depuis la v30, la ligne « Garantie locative » du décompte reprend ce que le locataire a
+          <b> réellement versé</b>, et non le montant prévu au bail. Un locataire qui devait 1 140 €
+          et n'en a payé que 650 se voit rembourser sur la base de 650 €. Quand les deux diffèrent,
+          l'application affiche les deux, sous la forme <i>650 € / 1 140 €</i>.
+        </p>
+
+        <p style={{ fontWeight: 700, marginBottom: 4, marginTop: 14 }}>Les sept immeubles, deux régimes</p>
+        <p style={{ marginTop: 0 }}>
+          <b>Nimy, Biche et Petite Guirlande</b> ont un décompte de charges : ils apparaissent dans
+          l'onglet <b>Décomptes</b>, et le remboursement s'ouvre sous le décompte.<br />
+          <b>Havré, Vannes, La Fermette et Egmont</b> n'en ont pas — leurs locataires ouvrent les
+          compteurs à leur nom. Ces logements n'existent nulle part ailleurs dans l'application :
+          leur liste entière vient du fichier de Gestion Loyers, et on y accède par
+          <b> 🏢 Autres immeubles</b>.
+        </p>
+      </Section>
+
+      <Section titre="Le signe du décompte de charges : la seule valeur qui peut être négative">
+        <p style={{ marginTop: 0 }}>
+          Dans le calcul du remboursement, toutes les lignes se soustraient — sauf le décompte de
+          charges, qui <b>s'additionne toujours</b>. C'est son signe qui porte l'information.
+        </p>
+        <ul style={{ paddingLeft: 18, marginTop: 0 }}>
+          <li style={{ marginBottom: 6 }}>
+            <b>Décompte positif</b> : les provisions versées ont dépassé les charges réelles.
+            Tu dois cette somme au locataire, elle s'ajoute à son remboursement.
+          </li>
+          <li style={{ marginBottom: 0 }}>
+            <b>Décompte négatif</b> : les provisions n'ont pas suffi. Le locataire te doit des
+            charges, la somme vient en déduction de son remboursement.
+          </li>
+        </ul>
+        <p>
+          Le calcul complet est donc : <b>garantie encaissée − retard de loyer − retard d'assurance
+          + décompte − dégâts locatifs</b>. Pour les quatre immeubles sans décompte, la ligne
+          « décompte » disparaît simplement de la formule.
+        </p>
+        <p style={{ marginBottom: 0 }}>
+          Si le total final est <b>négatif</b>, il n'y a rien à rembourser : c'est le locataire qui
+          reste redevable. Le montant s'affiche alors en rouge, précédé d'un signe moins.
+        </p>
       </Section>
 
       <Section titre="Si quelque chose semble anormal">
@@ -2778,6 +2866,7 @@ function DecomptesView({ data, setData, building }) {
   const [istaCost, setIstaCost] = useState(0);
   // --- MODULE REMBOURSEMENT : etats locaux ---
   const [rbOuvert, setRbOuvert] = useState(false);
+  const [rbAide, setRbAide] = useState(false);   // encart d'explication du bouton « ? »
   const [rbTextes, setRbTextes] = useState({});
   const [rbErreurs, setRbErreurs] = useState({});
   const [rbMsg, setRbMsg] = useState(null);
@@ -3116,7 +3205,12 @@ function DecomptesView({ data, setData, building }) {
   // Ecrit les montants venant de Gestion Loyers dans le panneau.
   const reprendreValeurs = (gl) => {
     const patch = {
-      garantie: auCentime(gl.garantieMontant || 0),
+      // Le remboursement porte sur ce qui a ete REELLEMENT ENCAISSE, pas sur le
+      // montant contractuel : un locataire qui n'a verse qu'une partie de sa
+      // garantie ne peut pas se voir restituer la totalite.
+      // Le repli sur garantieMontant couvre les fichiers remboursements.json
+      // produits avant Gestion Loyers v85, qui n'ont pas encore ce champ.
+      garantie: auCentime(gl.garantieEncaissee != null ? gl.garantieEncaissee : (gl.garantieMontant || 0)),
       retardLoyer: auCentime(gl.retardLoyer || 0),
       retardAssurance: auCentime(gl.retardAssurance || 0),
     };
@@ -3227,7 +3321,9 @@ function DecomptesView({ data, setData, building }) {
       || deja.retardAssurance !== undefined || deja.degats !== undefined;
     if (dejaSaisiAutre) return;
     const patch = {
-      garantie: auCentime(entree.garantieMontant || 0),
+      // Meme regle que ci-dessus : on part de l'encaisse, avec repli sur le
+      // montant contractuel pour les anciens fichiers.
+      garantie: auCentime(entree.garantieEncaissee != null ? entree.garantieEncaissee : (entree.garantieMontant || 0)),
       retardLoyer: auCentime(entree.retardLoyer || 0),
       retardAssurance: auCentime(entree.retardAssurance || 0),
     };
@@ -3362,6 +3458,11 @@ function DecomptesView({ data, setData, building }) {
       <div className="row" style={{ marginTop: 8 }}>
         <button className="btn btn-primary" onClick={ouvrirRemboursement} disabled={cmpBusy && !rbOuvert}>
           💶 {(cmpBusy && !rbOuvert) ? "Lecture…" : (rbOuvert ? "Fermer le remboursement" : "Remboursement")}
+        </button>
+        <button className="btn" onClick={() => setRbAide(v => !v)}
+          title="D'où viennent ces montants ?"
+          style={{ minWidth: 38, justifyContent: "center", fontWeight: 800 }}>
+          ?
         </button>
         <button className="btn btn-accent" onClick={enregistrerRemboursementWord} disabled={rbBusy}>
           <Save size={14} /> {rbBusy ? "Envoi en cours…" : "Sauver remboursement"}
@@ -3524,6 +3625,12 @@ function DecomptesView({ data, setData, building }) {
               )}
             </div>
           )}
+
+          <div style={{ marginTop: 14, paddingTop: 10, borderTop: "1px solid " + LINE, display: "flex", justifyContent: "center" }}>
+            <button className="btn" onClick={() => { setAutOuvert(false); setAutApercu(false); }} style={{ width: "66%", justifyContent: "center", textAlign: "center", fontWeight: 700 }}>
+              ← Retour
+            </button>
+          </div>
         </div>
       )}
 
@@ -3594,7 +3701,16 @@ function DecomptesView({ data, setData, building }) {
                               <td style={{ padding: "5px" }}>{r.unite ? r.unite.name : r.gl.unite}</td>
                               <td style={{ padding: "5px" }}>{r.dansApp ? (r.unite.tenant || "—") : <i style={{ color: MUTED }}>pas de décompte · voir « Autres immeubles »</i>}</td>
                               <td style={{ padding: "5px" }}>{r.gl.locataire}</td>
-                              <td style={{ padding: "5px", textAlign: "right" }}>{r.gl.garantieMontant ? fmtEUR(r.gl.garantieMontant) : "—"}</td>
+                              <td style={{ padding: "5px", textAlign: "right" }}>
+                                {(() => {
+                                  const enc = r.gl.garantieEncaissee != null ? r.gl.garantieEncaissee : r.gl.garantieMontant;
+                                  if (!enc && !r.gl.garantieMontant) return "—";
+                                  const partielle = r.gl.garantieEncaissee != null && r.gl.garantieMontant > r.gl.garantieEncaissee;
+                                  return partielle
+                                    ? fmtEUR(enc || 0) + " / " + fmtEUR(r.gl.garantieMontant)
+                                    : fmtEUR(enc || 0);
+                                })()}
+                              </td>
                               <td style={{ padding: "5px", textAlign: "right" }}>{r.gl.retardLoyer ? fmtEUR(r.gl.retardLoyer) : "—"}</td>
                               <td style={{ padding: "5px", textAlign: "right" }}>{r.gl.retardAssurance ? fmtEUR(r.gl.retardAssurance) : "—"}</td>
                             </tr>
@@ -3621,6 +3737,12 @@ function DecomptesView({ data, setData, building }) {
           ) : (
             <div style={{ fontSize: 13, color: MUTED }}>Lecture en cours…</div>
           )}
+
+          <div style={{ marginTop: 14, paddingTop: 10, borderTop: "1px solid " + LINE, display: "flex", justifyContent: "center" }}>
+            <button className="btn" onClick={() => setCmpOuvert(false)} style={{ width: "66%", justifyContent: "center", textAlign: "center", fontWeight: 700 }}>
+              ← Retour
+            </button>
+          </div>
         </div>
       )}
       {/* ===== fin de la comparaison ===== */}
@@ -3628,6 +3750,34 @@ function DecomptesView({ data, setData, building }) {
       {rbMsg && (
         <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, color: rbMsg.type === "ok" ? INK : "#b91c1c" }}>
           {rbMsg.texte}
+        </div>
+      )}
+
+      {rbAide && (
+        <div style={{ marginTop: 12, background: "#eef4f0", border: "1px solid " + LINE, borderRadius: 10, padding: "12px 14px", fontSize: 13, lineHeight: 1.6 }}>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>D'où viennent ces montants ?</div>
+          <p style={{ marginTop: 0 }}>
+            Garantie, retard de loyer et retard d'assurance viennent de <b>Gestion Loyers</b>.
+            Ils ne se saisissent pas ici. Le fichier est lu <b>automatiquement</b> à l'ouverture de
+            ce panneau : il n'y a aucun bouton « charger ».
+          </p>
+          <p>
+            <b>Montants périmés ?</b> Le fichier est gardé en mémoire quelques minutes.
+            Referme ce panneau et rouvre-le. Si besoin, recharge la page.
+          </p>
+          <p>
+            <b>Garantie</b> = ce qui a été <b>réellement encaissé</b>, pas le montant du bail.
+            Quand les deux diffèrent, l'affichage montre les deux.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            <b>Décompte</b> = seule ligne qui s'additionne. Positif : tu dois au locataire.
+            Négatif : il te doit des charges. Le mode d'emploi détaille tout cela.
+          </p>
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid " + LINE, display: "flex", justifyContent: "center" }}>
+            <button className="btn" onClick={() => setRbAide(false)} style={{ width: "66%", justifyContent: "center", textAlign: "center", fontWeight: 700 }}>
+              ← Retour
+            </button>
+          </div>
         </div>
       )}
 
@@ -3679,7 +3829,9 @@ function DecomptesView({ data, setData, building }) {
               <div style={{ marginTop: 6 }}>Ici : <b>{unit.tenant || "(vide)"}</b></div>
               <div>Gestion Loyers : <b>{rbDoute.locataire}</b></div>
               <div style={{ marginTop: 6 }}>
-                Garantie {fmtEUR(rbDoute.garantieMontant || 0)}
+                Garantie encaissée {fmtEUR(rbDoute.garantieEncaissee != null ? rbDoute.garantieEncaissee : (rbDoute.garantieMontant || 0))}
+                {rbDoute.garantieEncaissee != null && rbDoute.garantieMontant > rbDoute.garantieEncaissee
+                  ? " (sur " + fmtEUR(rbDoute.garantieMontant) + " dus)" : ""}
                 {rbDoute.retardLoyer ? " · retard loyer " + fmtEUR(rbDoute.retardLoyer) : ""}
                 {rbDoute.retardAssurance ? " · retard assurance " + fmtEUR(rbDoute.retardAssurance) : ""}
               </div>
@@ -3718,6 +3870,12 @@ function DecomptesView({ data, setData, building }) {
 
           <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>
             Ces montants sont conservés : pensez à « ☁️ Sauvegarde automatique OneDrive » avant de fermer l'application.
+          </div>
+
+          <div style={{ marginTop: 14, paddingTop: 10, borderTop: "1px solid " + LINE, display: "flex", justifyContent: "center" }}>
+            <button className="btn" onClick={() => { setRbOuvert(false); setRbDoute(null); }} style={{ width: "66%", justifyContent: "center", textAlign: "center", fontWeight: 700 }}>
+              ← Retour
+            </button>
           </div>
         </div>
       )}
