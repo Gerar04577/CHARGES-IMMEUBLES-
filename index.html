@@ -515,6 +515,19 @@ async function buildAutreBlob(immeubleNom, uniteNom, locataire, montants, total)
   return zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
 }
 
+// Dossier racine configure dans le module OneDrive du scenario Make.com
+// (champ Folder = "SAUVEGARDE DECOMPTES/" + folderPath, connexion
+// « OneDrive Charges (S.A. SAMADHI) », emplacement My Drive).
+// L'application ne connait que la partie relative ; ce prefixe sert UNIQUEMENT
+// a afficher a l'utilisateur le chemin complet ou retrouver son document.
+// SI LE CHAMP FOLDER EST MODIFIE DANS MAKE, CHANGER CETTE CONSTANTE AUSSI.
+const DOSSIER_RACINE_DOCUMENTS = "SAUVEGARDE DECOMPTES";
+
+// Chemin complet, lisible, tel qu'il apparait dans OneDrive.
+function cheminLisible(folderPath, filename) {
+  return DOSSIER_RACINE_DOCUMENTS + " / " + folderPath.split("/").join(" / ") + " / " + filename;
+}
+
 // Meme dossier et meme action Make que les decomptes : SAUVEGARDE DECOMPTES,
 // annee / immeuble / logement. Aucune modification du scenario Make.
 async function saveAutreOneDrive(immeubleNom, uniteNom, locataire, montants, total) {
@@ -1423,7 +1436,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v31";
+const APP_VERSION = "v32";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1590,8 +1603,16 @@ function AideView() {
           plus jamais redemandée pour ce logement.
         </div>
         <div style={{ marginTop: 8 }}>
-          <b>« Sauver remboursement »</b> ne fait que le document Word. Les montants, eux, ne sont
-          enregistrés que par le bouton habituel de sauvegarde OneDrive — comme tout le reste.
+          <b>« Sauver remboursement » fait deux choses, dans cet ordre</b> (depuis la v32) :
+          il enregistre d'abord tes montants sur OneDrive, puis il crée le document Word.
+          Si l'enregistrement échoue, le document n'est pas créé — mieux vaut aucun document
+          qu'un document remis au locataire dont les chiffres seraient perdus.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Le message de confirmation indique le <b>chemin complet</b> du document, à retrouver dans
+          OneDrive sous <b>SAUVEGARDE DECOMPTES</b> puis l'année, l'immeuble et le logement.
+          Le nom du fichier est toujours le même pour un locataire donné : cliquer plusieurs fois
+          ne crée pas de doublon, le document est simplement remplacé par sa version à jour.
         </div>
       </Section>
 
@@ -1784,6 +1805,45 @@ function garantirStructure(d) {
 const normaliser = (obj) => JSON.stringify(obj); // compare le contenu, pas la mise en forme
 function definirSnapshotOneDrive(objet) { try { snapshotOneDrive = normaliser(objet); } catch (e) { snapshotOneDrive = null; } }
 
+// v32 — Enregistrement des donnees, extrait de syncOneDrive pour etre reutilise
+// par les boutons « Sauver remboursement » : creer un document Word definitif
+// sans conserver les montants qui l'ont produit etait un piege (le document
+// partait, les chiffres restaient en memoire de l'onglet et disparaissaient).
+// Renvoie { ok: true } ou { ok: false, conflit: bool, motif: string }.
+// Ne touche a AUCUN etat React : l'appelant affiche ce qu'il veut.
+async function enregistrerDonneesOneDrive(donnees) {
+  let contenuActuel;
+  try {
+    contenuActuel = await lireOneDriveNormalise();
+  } catch (e) {
+    marquerEchecSync("Vérification impossible avant sauvegarde (" + e.message + ")");
+    return { ok: false, conflit: false, motif: "impossible de vérifier OneDrive (" + e.message + ")" };
+  }
+  if (snapshotOneDrive !== null && contenuActuel !== snapshotOneDrive) {
+    return { ok: false, conflit: true, motif: "quelqu'un d'autre a enregistré entre-temps" };
+  }
+  const json = JSON.stringify(donnees, null, 2);
+  const base64 = btoa(unescape(encodeURIComponent(json)));
+  let reponse;
+  try {
+    reponse = await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", data: base64, filename: "charges-data.json" })
+    });
+  } catch (e) {
+    marquerEchecSync("Connexion impossible (" + e.message + ")");
+    return { ok: false, conflit: false, motif: "connexion impossible (" + e.message + ")" };
+  }
+  if (!reponse.ok) {
+    marquerEchecSync("Réponse Make.com : " + reponse.status);
+    return { ok: false, conflit: false, motif: "Make.com a répondu " + reponse.status };
+  }
+  definirSnapshotOneDrive(donnees);
+  clearPendingSync();
+  return { ok: true };
+}
+
 // Relit le fichier sur OneDrive. Leve une exception si la lecture echoue :
 // l'appelant DOIT alors bloquer plutot que d'ecrire a l'aveugle.
 async function lireOneDriveNormalise() {
@@ -1939,43 +1999,17 @@ function BackupBar({ data, setData }) {
   const syncOneDrive = async () => {
     setBusy(true);
     try {
-      // --- verification de conflit, AVANT toute ecriture ---
-      let contenuActuel;
-      try {
-        contenuActuel = await lireOneDriveNormalise();
-      } catch (e) {
-        // Si la verification elle-meme echoue, on NE SAUVEGARDE PAS : ecrire
-        // sans avoir pu comparer, c'est risquer d'ecraser un travail inconnu.
-        marquerEchecSync("Vérification impossible avant sauvegarde (" + e.message + ")");
-        flash("err", "Sauvegarde annulée : impossible de vérifier OneDrive.");
-        setBusy(false);
-        return;
-      }
-      if (snapshotOneDrive !== null && contenuActuel !== snapshotOneDrive) {
+      // v32 : verification de conflit + ecriture regroupees dans
+      // enregistrerDonneesOneDrive(), partagee avec « Sauver remboursement ».
+      const res = await enregistrerDonneesOneDrive(data);
+      if (res.ok) {
+        flash("ok", "✓ Sauvegarde automatique OneDrive réussie");
+      } else if (res.conflit) {
         setConflit(true);
         flash("err", "Sauvegarde bloquée — conflit détecté.");
-        setBusy(false);
-        return;
-      }
-
-      const json = JSON.stringify(data, null, 2);
-      const base64 = btoa(unescape(encodeURIComponent(json)));
-      const response = await fetch(WEBHOOK_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "save", data: base64, filename: "charges-data.json" })
-      });
-      if (response.ok) {
-        definirSnapshotOneDrive(data); // notre propre envoi devient la nouvelle reference
-        clearPendingSync();
-        flash("ok", "✓ Sauvegarde automatique OneDrive réussie");
       } else {
-        marquerEchecSync("Réponse Make.com : " + response.status);
-        flash("err", "Erreur Make.com : " + response.status);
+        flash("err", "Sauvegarde annulée : " + res.motif);
       }
-    } catch (e) {
-      marquerEchecSync("Connexion impossible (" + e.message + ")");
-      flash("err", "Erreur de connexion : " + e.message);
     } finally {
       setBusy(false);
     }
@@ -3356,11 +3390,21 @@ function DecomptesView({ data, setData, building }) {
     verrouEnvoiAutre.current = true;
     setAutBusy(true); setAutMsg(null);
     try {
+      // v32 — meme regle que le remboursement des trois immeubles :
+      // les montants d'abord, le document ensuite.
+      const sauv = await enregistrerDonneesOneDrive(data);
+      if (!sauv.ok) {
+        setAutMsg({ type: "err", texte: sauv.conflit
+          ? "Rien n'a été enregistré : quelqu'un d'autre a enregistré entre-temps. Recharge la page, puis recommence."
+          : "Rien n'a été enregistré : " + sauv.motif + ". Le document n'a pas été créé." });
+        return;
+      }
       const res = await saveAutreOneDrive(NOM_AUTRE_IMMEUBLE[autImmeuble] || autImmeuble,
         autEntree.unite, autEntree.locataire, autMontants, autTotal);
-      setAutMsg({ type: "ok", texte: "✓ Document enregistré : " + res.folderPath + "/" + res.filename });
+      setAutMsg({ type: "ok", texte: "✓ Montants enregistrés · Document créé dans "
+        + cheminLisible(res.folderPath, res.filename) });
     } catch (e) {
-      setAutMsg({ type: "err", texte: "Échec : " + e.message });
+      setAutMsg({ type: "err", texte: "Montants enregistrés, mais le document a échoué : " + e.message });
     } finally {
       setAutBusy(false); verrouEnvoiAutre.current = false;
     }
@@ -3404,10 +3448,22 @@ function DecomptesView({ data, setData, building }) {
     verrouEnvoi.current = true;
     setRbBusy(true); setRbMsg(null);
     try {
+      // v32 — LES MONTANTS D'ABORD, LE DOCUMENT ENSUITE.
+      // Si l'enregistrement echoue, on ne cree PAS le Word : mieux vaut aucun
+      // document qu'un document remis au locataire dont les chiffres seront
+      // perdus a la fermeture de l'onglet.
+      const sauv = await enregistrerDonneesOneDrive(data);
+      if (!sauv.ok) {
+        setRbMsg({ type: "err", texte: sauv.conflit
+          ? "Rien n'a été enregistré : quelqu'un d'autre a enregistré entre-temps. Recharge la page, puis recommence."
+          : "Rien n'a été enregistré : " + sauv.motif + ". Le document n'a pas été créé." });
+        return;
+      }
       const res = await saveRemboursementOneDrive(b.name, unit.name, unit.tenant || "Locataire", periodLabel, remb, rbDecompte, rbTotal);
-      setRbMsg({ type: "ok", texte: "✓ Document enregistré : " + res.folderPath + "/" + res.filename });
+      setRbMsg({ type: "ok", texte: "✓ Montants enregistrés · Document créé dans "
+        + cheminLisible(res.folderPath, res.filename) });
     } catch (e) {
-      setRbMsg({ type: "err", texte: "Échec : " + e.message });
+      setRbMsg({ type: "err", texte: "Montants enregistrés, mais le document a échoué : " + e.message });
     } finally {
       setRbBusy(false); verrouEnvoi.current = false;
     }
