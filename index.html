@@ -1436,7 +1436,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v33";
+const APP_VERSION = "v34";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1751,6 +1751,12 @@ function AideView() {
           <b>Un locataire parti en cours d'année ?</b> ISTA établit un décompte partiel. Vous aurez donc
           <b> deux factures la même année</b> pour ce logement : celle du partant et celle du suivant.
           Enregistrez les deux, chacune à sa date.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <b>Dans l'onglet Décomptes</b>, sous le tableau, les factures de ce logement sont listées,
+          la plus récente en tête, chacune avec un bouton <b>Reprendre</b> qui reporte son montant
+          dans la case « dont ISTA ». <b>C'est vous qui choisissez la ligne</b> — en cas de décompte
+          partiel, prenez celle qui couvre la période du décompte. Le montant reste modifiable après.
         </div>
         <div style={{ marginTop: 8 }}>
           Dans l'onglet <b>Décomptes</b>, sous le tableau, un rappel indique la dernière facture reçue.
@@ -3052,6 +3058,9 @@ function DecomptesView({ data, setData, building }) {
   // (e.g. RDC Commercial / privateMeterOnly).
   const [mazoutCost, setMazoutCost] = useState(0);
   const [istaCost, setIstaCost] = useState(0);
+  const [istaRepris, setIstaRepris] = useState(null); // derniere facture reprise, pour confirmation
+  const [chauffageTexte, setChauffageTexte] = useState(null);  // frappe en cours dans la case ISTA / mazout
+  const [erreurChauffage, setErreurChauffage] = useState(null);
   // --- MODULE REMBOURSEMENT : etats locaux ---
   const [rbOuvert, setRbOuvert] = useState(false);
   const [rbAide, setRbAide] = useState(false);   // encart d'explication du bouton « ? »
@@ -3098,7 +3107,7 @@ function DecomptesView({ data, setData, building }) {
   // Les deux passent desormais par la meme fonction.
   const changerLogement = (id) => {
     setUnitId(id);
-    setMoisNonPayesTexte(null); setErreurMoisNonPayes(null); setProvisionTexte(null); setErreurProvision(null); setRbOuvert(false); setRbTextes({}); setRbErreurs({}); setRbMsg(null); setCmpOuvert(false); setRbDoute(null); setCmpErreur(null); setRbInfo(null); setAutOuvert(false); setAutApercu(false); setAutMsg(null); setElecConsoOverride(null); setEauConsoOverride(null); setMazoutCost(0); setIstaCost(0); setPeriodFromOverride(null); setPeriodToOverride(null);
+    setMoisNonPayesTexte(null); setErreurMoisNonPayes(null); setProvisionTexte(null); setErreurProvision(null); setRbOuvert(false); setRbTextes({}); setRbErreurs({}); setRbMsg(null); setCmpOuvert(false); setRbDoute(null); setCmpErreur(null); setRbInfo(null); setAutOuvert(false); setAutApercu(false); setAutMsg(null); setElecConsoOverride(null); setEauConsoOverride(null); setMazoutCost(0); setIstaCost(0); setIstaRepris(null); setChauffageTexte(null); setErreurChauffage(null); setPeriodFromOverride(null); setPeriodToOverride(null);
   };
 
   // DEFAUT 16 : changer d'onglet d'immeuble appelait setUnitId DIRECTEMENT, sans
@@ -3124,6 +3133,34 @@ function DecomptesView({ data, setData, building }) {
   const eauMeters = elecMeters.filter(m => m.type === "eau");
   const elecOnly = elecMeters.filter(m => m.type === "elec");
   const ista = (data.ista || []).find(i => i.building === building && i.unit === unitId);
+
+  // Reprise d'une facture ISTA dans la case « dont ISTA ». ISTA facturant un
+  // decompte PARTIEL au depart d'un locataire, un logement peut avoir deux
+  // factures la meme annee : Gerard choisit donc la ligne, jamais l'application.
+  const reprendreFactureIsta = (montant) => {
+    setIstaCost(auCentime(montant));
+    setIstaRepris(auCentime(montant));
+    setChauffageTexte(null); setErreurChauffage(null);
+  };
+
+  // Saisie de la case « dont ISTA » (ou mazout) : virgule francaise acceptee,
+  // etats intermediaires de frappe tolerés, jamais de zero enregistre en silence.
+  const saisirChauffage = (txt) => {
+    setChauffageTexte(txt);
+    const poser = unit.hasIsta ? setIstaCost : setMazoutCost;
+    const r = analyserNombre(txt);
+    if (r.vide) { setErreurChauffage(null); poser(0); setIstaRepris(null); return; }
+    if (/^-?[.,]?$/.test(txt.trim())) { setErreurChauffage(null); return; }
+    if (!r.valide) { setErreurChauffage("Montant invalide."); return; }
+    if (r.valeur < 0) { setErreurChauffage("Ce montant ne peut pas être négatif."); return; }
+    setErreurChauffage(null);
+    poser(auCentime(r.valeur));
+    setIstaRepris(null);
+  };
+
+  const quitterChauffage = () => {
+    if (chauffageTexte !== null && analyserNombre(chauffageTexte).vide) setChauffageTexte(null);
+  };
 
   const elecInterval = elecOnly.length ? elecOnly.map(m => lastInterval(m.readings)).filter(Boolean) : [];
   const eauInterval = eauMeters.length ? eauMeters.map(m => lastInterval(m.readings)).filter(Boolean) : [];
@@ -4157,7 +4194,17 @@ function DecomptesView({ data, setData, building }) {
                 <tr>
                   <td>{unit.hasIsta ? "Chauffage / Eau chaude" : (mazoutNimyIsElecHeating ? "Mazout / Eau chaude sanitaire" : (building === "nimy" ? "Mazout / Chauffage / Eau chaude sanitaire (quote-part)" : "Mazout / Chauffage (quote-part)"))}</td>
                   <td>{unit.hasIsta ? "ISTA" : "—"}</td>
-                  <td><input type="number" step="0.01" value={(unit.hasIsta ? istaCost : (building === "nimy" ? (mazoutCost || mazoutNimyAuto) : mazoutCost)) || ""} placeholder="0" onChange={e => (unit.hasIsta ? setIstaCost : setMazoutCost)(parseFloat(e.target.value) || 0)} style={{ width: 90, textAlign: "right" }} /></td>
+                  <td>
+                    <input type="text" inputMode="decimal" placeholder="0"
+                      value={chauffageTexte !== null ? chauffageTexte
+                        : ((unit.hasIsta ? istaCost : (building === "nimy" ? (mazoutCost || mazoutNimyAuto) : mazoutCost)) || "")}
+                      onChange={e => saisirChauffage(e.target.value)}
+                      onBlur={quitterChauffage}
+                      style={{ width: 90, textAlign: "right" }} />
+                    {erreurChauffage && (
+                      <div style={{ fontSize: 11, color: "#b91c1c", fontWeight: 600, marginTop: 2 }}>{erreurChauffage}</div>
+                    )}
+                  </td>
                 </tr>
               )}
               <tr>
@@ -4215,9 +4262,32 @@ function DecomptesView({ data, setData, building }) {
         )}
 
         {ista && Array.isArray(ista.invoices) && ista.invoices.length > 0 && (
-          <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>
-            Pour référence — dernière facture ISTA reçue : {fmtEUR(ista.invoices[ista.invoices.length - 1][1])} le {fmtDate(ista.invoices[ista.invoices.length - 1][0])}.
-            Reportez le montant correspondant à la période ci-dessus dans le champ "dont ISTA" du tableau.
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 8, background: PAPER, borderRadius: 8, padding: "10px 12px" }}>
+            <div style={{ fontWeight: 700, color: INK, fontSize: 13 }}>
+              Factures ISTA de ce logement
+              {referenceIsta(building, unitId) ? " — réf. " + referenceIsta(building, unitId) : ""}
+            </div>
+            <div style={{ marginTop: 4, lineHeight: 1.5 }}>
+              Choisissez celle qui couvre la période du décompte ci-dessus. ISTA établit un décompte
+              partiel quand un locataire part en cours d'année : il peut donc y en avoir deux la même année.
+            </div>
+            {ista.invoices.slice().reverse().map((inv, i) => (
+              <div className="between" key={i}
+                style={{ marginTop: 8, background: "#fff", borderRadius: 8, padding: "6px 10px" }}>
+                <div style={{ fontSize: 13.5, color: INK }}>
+                  <b>{fmtEUR(inv[1])}</b> — {fmtDate(inv[0])}
+                </div>
+                <button className="btn btn-accent" style={{ padding: "4px 12px", fontSize: 12 }}
+                  onClick={() => reprendreFactureIsta(inv[1])}>
+                  Reprendre
+                </button>
+              </div>
+            ))}
+            {istaRepris !== null && (
+              <div style={{ marginTop: 8, color: INK, fontWeight: 600 }}>
+                ✓ {fmtEUR(istaRepris)} reporté dans la case « dont ISTA » — vous pouvez encore le corriger.
+              </div>
+            )}
           </div>
         )}
 
