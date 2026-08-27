@@ -13,8 +13,6 @@
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
 <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   html, body { margin:0; padding:0; }
   #root { min-height: 100vh; }
@@ -1042,22 +1040,6 @@ async function shareDecompteDoc(buildingName, unitName, tenantName, period, line
   return false;
 }
 
-// Fallback: classic blob download (works in desktop browsers; unreliable in iOS standalone apps).
-// Génère un vrai PDF téléchargeable à partir de l'aperçu du décompte tel
-// qu'affiché à l'écran (capture visuelle), sans dépendre du moteur
-// d'impression du navigateur — évite les soucis de mise en page/pages
-// vides constatés avec window.print().
-async function downloadDecomptePdf(buildingName, unitName, period) {
-  const el = document.getElementById("decompte-capture-area");
-  if (!el || !window.html2canvas || !window.jspdf) return;
-  const canvas = await window.html2canvas(el, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
-  const imgData = canvas.toDataURL("image/jpeg", 0.95);
-  const pageWidthMM = 210;
-  const pageHeightMM = (canvas.height * pageWidthMM) / canvas.width;
-  const doc = new window.jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: [pageWidthMM, pageHeightMM] });
-  doc.addImage(imgData, "JPEG", 0, 0, pageWidthMM, pageHeightMM);
-  doc.save(decompteFilename(buildingName, unitName, period, "pdf"));
-}
 
 async function downloadDecompteDoc(buildingName, unitName, tenantName, period, lines, totals) {
   const html = buildDecompteHtml(buildingName, unitName, tenantName, period, lines, totals);
@@ -1150,18 +1132,13 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
       `}</style>
       <div className="no-print row" style={{ marginBottom: 12, flexWrap: "wrap" }}>
         <button className="btn btn-ghost" onClick={onClose}><ArrowLeft size={15} /> Retour</button>
-        <button className="btn btn-primary" onClick={() => window.print()}><FileText size={15} /> Imprimer / Enregistrer en PDF</button>
         <button className="btn" onClick={onDownloadDoc} style={{ background: "#4f6ef7", color: "#fff", border: "none" }}><Download size={15} /> Télécharger le .docx</button>
-        <button className="btn no-print" onClick={() => downloadDecomptePdf(b.name, unit.name, period)} style={{ background: "#0891b2", color: "#fff", border: "none" }}><Download size={15} /> Télécharger en PDF</button>
         <button className="btn btn-success" onClick={handleSaveOneDrive} disabled={saveOneDriveState === "saving"}
           style={{ background: saveOneDriveState === "ok" ? "#16a34a" : saveOneDriveState === "err" ? "#dc2626" : "linear-gradient(135deg,#16a34a,#15803d)", color: "#fff", border: "none" }}>
           {saveOneDriveState === "saving" ? "⏳ Sauvegarde…" : saveOneDriveState === "ok" ? "✓ Sauvegardé !" : saveOneDriveState === "err" ? "✗ Erreur" : "☁️ Sauvegarder le décompte (OneDrive)"}
         </button>
         <button className="btn" onClick={() => window.open('https://gerar04577.github.io/ENVOI-DECOMPTES/charges-envoi.html', '_blank')} style={{ background: "linear-gradient(135deg,#4f6ef7,#7c3aed)", color: "#fff", border: "none" }}>
           📬 Envoyer
-        </button>
-        <button className="btn" onClick={() => window.open('https://gerar04577.github.io/CHARGES-IMMEUBLES-/remboursement.html', '_blank')} style={{ background: "linear-gradient(135deg,#f0abfc,#c084fc)", color: "#fff", border: "none" }}>
-          💶 Remboursement
         </button>
       </div>
       {shareState === "unsupported" && (
@@ -1436,7 +1413,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v35";
+const APP_VERSION = "v36";
 
 function TopBar({ tab }) {
   const titles = {
@@ -2609,7 +2586,6 @@ function ReportView({ data, building, type, onClose }) {
       `}</style>
       <div className="no-print row" style={{ marginBottom: 12 }}>
         <button className="btn btn-ghost" onClick={onClose}><ArrowLeft size={15} /> Retour</button>
-        <button className="btn btn-primary" onClick={() => window.print()}><FileText size={15} /> Imprimer / Enregistrer en PDF</button>
       </div>
 
       <div className="display" style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>
@@ -2746,6 +2722,75 @@ const REFERENCE_ISTA = {
 };
 
 const referenceIsta = (building, unitId) => REFERENCE_ISTA[building + "|" + unitId] || null;
+
+// Une entree de remboursement est « payee » quand Gerard a coche la case et
+// indique la date. Tant qu'elle ne l'est pas, ce n'est qu'une preparation —
+// ou un essai. C'est la SEULE facon de distinguer les deux.
+const estPaye = (m) => !!(m && m.payeLe);
+
+// Toutes les entrees de remboursement, les deux sortes reunies, pour la liste.
+function listeRemboursements(data) {
+  const lignes = [];
+  const immeubles = data.buildings || [];
+  const nomImmeuble = (id) => (immeubles.find(b => b.id === id) || {}).name || id;
+
+  for (const [cle, m] of Object.entries(data.remboursements || {})) {
+    const [immeuble, logement, du, au] = String(cle).split("|");
+    const b = immeubles.find(x => x.id === immeuble);
+    const u = b && (b.units || []).find(x => x.id === logement);
+    lignes.push({
+      cle, sorte: "decompte", immeuble, logement,
+      nomImmeuble: nomImmeuble(immeuble),
+      nomLogement: (u && u.name) || logement,
+      locataire: (u && u.tenant) || "",
+      periode: (du && au) ? (fmtDate(du) + " – " + fmtDate(au)) : "",
+      montants: m, total: totalRemboursement(m, m.decompte || 0),
+      payeLe: m.payeLe || null,
+    });
+  }
+
+  for (const [cle, m] of Object.entries(data.remboursementsAutres || {})) {
+    const [immeuble, logement] = String(cle).split("|");
+    lignes.push({
+      cle, sorte: "autre", immeuble, logement,
+      nomImmeuble: NOM_AUTRE_IMMEUBLE[immeuble] || immeuble,
+      nomLogement: logement, locataire: m.locataire || "",
+      periode: "",
+      montants: m, total: totalAutreImmeuble(m),
+      payeLe: m.payeLe || null,
+    });
+  }
+
+  // Les plus recemment payes en tete ; les non payes ensuite.
+  lignes.sort((a, b) => String(b.payeLe || "").localeCompare(String(a.payeLe || "")));
+  return lignes;
+}
+
+// Case « Remboursé le … », commune aux deux panneaux.
+function CasePaiement({ payeLe, onChange }) {
+  const coche = !!payeLe;
+  return (
+    <div style={{ marginTop: 10, background: "#fff", borderRadius: 8, padding: "10px 12px" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontWeight: 700, fontSize: 13.5 }}>
+        <input type="checkbox" checked={coche}
+          onChange={e => onChange(e.target.checked ? todayISO() : null)}
+          style={{ width: 18, height: 18 }} />
+        Remboursé
+      </label>
+      {coche && (
+        <div style={{ marginTop: 8 }}>
+          <span className="label">Date du remboursement</span>
+          <input type="date" value={payeLe} onChange={e => onChange(e.target.value || todayISO())} />
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
+        {coche
+          ? "Cette ligne apparaît dans « Remboursés » de la liste des remboursements."
+          : "À cocher quand l'argent a réellement été versé. Tant que la case est vide, cette ligne reste dans « Préparés, pas encore remboursés »."}
+      </div>
+    </div>
+  );
+}
 
 function IstaRow({ data, setData, building, unitId }) {
   const ista = (data.ista || []).find(i => i.building === building && i.unit === unitId);
@@ -3060,6 +3105,7 @@ function DecomptesView({ data, setData, building }) {
   const [mazoutCost, setMazoutCost] = useState(0);
   const [istaCost, setIstaCost] = useState(0);
   const [istaRepris, setIstaRepris] = useState(null); // derniere facture reprise, pour confirmation
+  const [listeOuverte, setListeOuverte] = useState(false);
   const [chauffageTexte, setChauffageTexte] = useState(null);  // frappe en cours dans la case ISTA / mazout
   const [erreurChauffage, setErreurChauffage] = useState(null);
   const [elecConsoTexte, setElecConsoTexte] = useState(null);
@@ -3699,6 +3745,100 @@ function DecomptesView({ data, setData, building }) {
     });
   };
 
+  if (listeOuverte) {
+    const lignes = listeRemboursements(data);
+    const payes = lignes.filter(l => estPaye(l.montants));
+    const enAttente = lignes.filter(l => !estPaye(l.montants));
+    const somme = (t) => Math.round(t.reduce((s, l) => s + (l.total || 0), 0) * 100) / 100;
+
+    const supprimer = (ligne) => {
+      if (!window.confirm("Supprimer définitivement le remboursement de "
+        + (ligne.locataire || ligne.nomLogement) + " (" + fmtEUR(ligne.total) + ") ?\n\n"
+        + "Cette ligne sera retirée des données. Le document Word déjà enregistré sur OneDrive n'est pas touché.")) return;
+      setData(prev => {
+        const next = JSON.parse(JSON.stringify(prev));
+        const ou = ligne.sorte === "autre" ? "remboursementsAutres" : "remboursements";
+        if (next[ou]) delete next[ou][ligne.cle];
+        return next;
+      });
+    };
+
+    const Ligne = ({ l }) => (
+      <div style={{ background: "#fff", borderRadius: 10, padding: "10px 12px", marginTop: 8 }}>
+        <div className="between">
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 15, color: l.total < 0 ? "#b91c1c" : INK }}>
+              {(l.total < 0 ? "- " : "") + fmtEUR(Math.abs(l.total))}
+            </div>
+            <div style={{ fontSize: 13 }}>{l.nomImmeuble} — {l.nomLogement}</div>
+            {l.locataire && <div style={{ fontSize: 12.5, color: MUTED }}>{l.locataire}</div>}
+            {l.periode && <div style={{ fontSize: 11.5, color: MUTED }}>{l.periode}</div>}
+            {l.payeLe && (
+              <div style={{ fontSize: 12, color: INK, fontWeight: 600, marginTop: 2 }}>
+                ✓ remboursé le {fmtDate(l.payeLe)}
+              </div>
+            )}
+          </div>
+          <button className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }}
+            onClick={() => supprimer(l)}>Supprimer</button>
+        </div>
+        <div style={{ fontSize: 11.5, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
+          Garantie {fmtEUR(l.montants.garantie || 0)}
+          {(l.montants.retardLoyer || 0) ? " · retard loyer − " + fmtEUR(l.montants.retardLoyer) : ""}
+          {(l.montants.retardAssurance || 0) ? " · retard assurance − " + fmtEUR(l.montants.retardAssurance) : ""}
+          {l.sorte === "decompte" && (l.montants.decompte || 0) ? " · décompte " + fmtEUR(l.montants.decompte) : ""}
+          {(l.montants.degats || 0) ? " · dégâts − " + fmtEUR(l.montants.degats) : ""}
+        </div>
+      </div>
+    );
+
+    return (
+      <div>
+        <div className="row" style={{ marginBottom: 12 }}>
+          <button className="btn btn-ghost" onClick={() => setListeOuverte(false)}>
+            <ArrowLeft size={15} /> Retour
+          </button>
+        </div>
+
+        <div className="display" style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>
+          Liste des remboursements
+        </div>
+        <div style={{ fontSize: 13, color: MUTED, marginBottom: 16, lineHeight: 1.5 }}>
+          Tous immeubles confondus. Une ligne passe dans « Remboursés » quand vous cochez la case
+          « Remboursé » dans son panneau.
+        </div>
+
+        <div className="card">
+          <div className="between" style={{ marginBottom: 4 }}>
+            <div style={{ fontWeight: 800 }}>Remboursés</div>
+            <MeterDigits value={fmtEUR(somme(payes))} />
+          </div>
+          {payes.length === 0 && (
+            <div style={{ fontSize: 13, color: MUTED }}>Aucun remboursement marqué comme payé.</div>
+          )}
+          {payes.map(l => <Ligne key={l.sorte + l.cle} l={l} />)}
+        </div>
+
+        <div className="card">
+          <div className="between" style={{ marginBottom: 4 }}>
+            <div style={{ fontWeight: 800 }}>Préparés, pas encore remboursés</div>
+            <MeterDigits value={fmtEUR(somme(enAttente))} />
+          </div>
+          {enAttente.length === 0 && (
+            <div style={{ fontSize: 13, color: MUTED }}>Aucun remboursement en attente.</div>
+          )}
+          {enAttente.map(l => <Ligne key={l.sorte + l.cle} l={l} />)}
+        </div>
+
+        <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.5, padding: "0 4px 12px" }}>
+          Les essais faits pendant la mise au point apparaissent ici : le bouton <b>Supprimer</b> les
+          retire définitivement. Toute modification n'est enregistrée que par
+          « ☁️ Sauvegarde automatique OneDrive ».
+        </div>
+      </div>
+    );
+  }
+
   if (preview) {
     return (
       <DecomptePreview
@@ -3730,6 +3870,17 @@ function DecomptesView({ data, setData, building }) {
         </button>
         <button className="btn btn-accent" onClick={enregistrerRemboursementWord} disabled={rbBusy}>
           <Save size={14} /> {rbBusy ? "Envoi en cours…" : "Sauver remboursement"}
+        </button>
+      </div>
+
+      {/* Liste de tous les remboursements, payes et preparés. */}
+      <div style={{ marginTop: 8, display: "flex", justifyContent: "center" }}>
+        <button className="btn" onClick={() => setListeOuverte(true)}
+          style={{
+            width: "66%", justifyContent: "center", textAlign: "center",
+            background: "#E8E4F0", borderColor: "#CFC7E0", color: INK, fontWeight: 700,
+          }}>
+          📋 Liste des remboursements
         </button>
       </div>
 
@@ -3817,6 +3968,7 @@ function DecomptesView({ data, setData, building }) {
                     <MeterDigits value={(autTotal < 0 ? "-" : "") + fmtEUR(Math.abs(autTotal))} cls={autTotal < 0 ? "red" : ""} />
                   </div>
 
+
                   <div className="row" style={{ marginTop: 10 }}>
                     <button className="btn btn-primary" onClick={() => setAutApercu(v => !v)}>
                       <FileText size={14} /> {autApercu ? "Fermer l'aperçu" : "Voir le document"}
@@ -3880,6 +4032,9 @@ function DecomptesView({ data, setData, building }) {
                       </div>
                     </div>
                   )}
+
+                  <CasePaiement payeLe={autMontants.payeLe || null}
+                    onChange={d => autCle && majAutre(autCle, { payeLe: d })} />
 
                   <div style={{ fontSize: 12, color: MUTED, marginTop: 10, lineHeight: 1.5 }}>
                     Ces montants sont conservés : pensez à « ☁️ Sauvegarde automatique OneDrive »
@@ -4131,6 +4286,9 @@ function DecomptesView({ data, setData, building }) {
             <div style={{ fontWeight: 800, fontSize: 15 }}>TOTAL À REMBOURSER</div>
             <MeterDigits value={(rbTotal < 0 ? "-" : "") + fmtEUR(Math.abs(rbTotal))} cls={rbTotal < 0 ? "red" : ""} />
           </div>
+
+          <CasePaiement payeLe={remb.payeLe || null}
+            onChange={dte => majRemboursement({ payeLe: dte })} />
 
           <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>
             Ces montants sont conservés : pensez à « ☁️ Sauvegarde automatique OneDrive » avant de fermer l'application.
