@@ -1143,8 +1143,9 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
       </div>
       {shareState === "unsupported" && (
         <div className="no-print" style={{ fontSize: 12, color: MUTED, marginBottom: 10, padding: 8, background: PAPER, borderRadius: 8 }}>
-          Le partage direct n'est pas disponible sur cet appareil/navigateur — utilisez "Imprimer / Enregistrer en PDF" ci-dessus,
-          ou <button className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }} onClick={onDownloadDoc}>essayez le téléchargement</button>.
+          Le partage direct n'est pas disponible sur cet appareil/navigateur —
+          <button className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }} onClick={onDownloadDoc}>téléchargez le .docx</button>
+          et joignez-le vous-même à votre message.
         </div>
       )}
 
@@ -1413,7 +1414,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v36";
+const APP_VERSION = "v37";
 
 function TopBar({ tab }) {
   const titles = {
