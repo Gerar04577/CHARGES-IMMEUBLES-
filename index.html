@@ -555,9 +555,11 @@ async function saveAutreOneDrive(immeubleNom, uniteNom, locataire, montants, tot
 // Meme dossier et meme action Make que le decompte (save_decompte_auto) :
 // AUCUNE modification du scenario Make n'est necessaire, seul le nom change.
 async function saveRemboursementOneDrive(buildingName, unitName, tenantName, period, remb, dec, total) {
-  const parts = period.split(" - ");
-  const dateFin = parts[parts.length - 1].trim();
-  const year = dateFin.slice(-4);
+  // ANNEE DE L'ENVOI, pas celle de la fin de periode : un remboursement
+  // preparé en 2026 pour un bail qui s'est termine en 2025 doit se ranger
+  // dans le dossier 2026, avec les autres documents du meme envoi.
+  // C'est la meme regle que pour les autres immeubles et pour Envoi Decomptes.
+  const year = String(new Date().getFullYear());
   const buildingClean = cleanPath(buildingName);
   const unitClean = cleanPath(unitName);
   const tenantClean = cleanPath(tenantName);
@@ -1064,9 +1066,10 @@ function cleanPath(str) {
 }
 
 async function saveDecompteOneDrive(buildingName, unitName, tenantName, period, lines, totals) {
-  const parts = period.split(" - ");
-  const dateFin = parts[parts.length - 1].trim();
-  const year = dateFin.slice(-4);
+  // ANNEE DE L'ENVOI, comme le remboursement, les autres immeubles et
+  // Envoi Decomptes : les documents d'un meme envoi doivent se ranger
+  // ENSEMBLE, meme si la periode s'est terminee l'annee precedente.
+  const year = String(new Date().getFullYear());
   const buildingClean = cleanPath(buildingName);
   const unitClean = cleanPath(unitName);
   const tenantClean = cleanPath(tenantName);
@@ -1414,7 +1417,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v37";
+const APP_VERSION = "v38";
 
 function TopBar({ tab }) {
   const titles = {
