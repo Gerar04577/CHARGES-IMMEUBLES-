@@ -357,6 +357,19 @@ function totalRemboursement(remb, decompteCalcule) {
   return Math.round(total * 100) / 100;
 }
 
+// Chaque ligne du commentaire devient un paragraphe Word : un simple saut de
+// ligne dans le texte saisi n'en produirait aucun dans le document.
+function commentaireEnParagraphes(texte) {
+  const t = String(texte || "").trim();
+  if (!t) return "";
+  const lignes = t.split(/\r?\n/);
+  let xml = docxPara("Commentaire", { size: 20, bold: true, spacingAfter: 60 });
+  for (const ligne of lignes) {
+    xml += docxPara(ligne.trim() || " ", { size: 20, align: "both", spacingAfter: 60 });
+  }
+  return xml;
+}
+
 function buildRemboursementDocxXml(buildingName, unitName, tenantName, period, remb, dec, total) {
   const INK_HEX = "2E4E3F", PAPER_HEX = "F6F2EA", RED_HEX = "C0392B";
   const r = remb || {};
@@ -391,10 +404,11 @@ function buildRemboursementDocxXml(buildingName, unitName, tenantName, period, r
     ]),
   ], { nCols: 2 });
 
+  const commentaire = commentaireEnParagraphes(r.commentaire);
   const note = docxPara("Un total négatif signifie que le locataire reste redevable de ce montant. Un total positif est à lui rembourser.", { size: 18, align: "both", spacingAfter: 120 });
   const date = docxPara("Document établi le " + fmtDate(todayISO()), { size: 18 });
 
-  return titre + intro + tableau + note + date;
+  return titre + intro + tableau + commentaire + note + date;
 }
 
 async function buildRemboursementBlob(buildingName, unitName, tenantName, period, remb, dec, total) {
@@ -454,6 +468,7 @@ function totalAutreImmeuble(montants) {
 }
 
 // Document Word SANS ligne « Décompte de charges ».
+
 function buildAutreDocxXml(immeubleNom, uniteNom, locataire, montants, total) {
   const INK_HEX = "2E4E3F", PAPER_HEX = "F6F2EA", RED_HEX = "C0392B";
   const m = montants || {};
@@ -489,11 +504,12 @@ function buildAutreDocxXml(immeubleNom, uniteNom, locataire, montants, total) {
     ]),
   ], { nCols: 2 });
 
+  const commentaire = commentaireEnParagraphes(m.commentaire);
   const note = docxPara("Un total négatif signifie que le locataire reste redevable de ce montant. "
     + "Un total positif est à lui rembourser.", { size: 18, align: "both", spacingAfter: 120 });
   const date = docxPara("Document établi le " + fmtDate(todayISO()), { size: 18 });
 
-  return titre + intro + tableau + note + date;
+  return titre + intro + tableau + commentaire + note + date;
 }
 
 async function buildAutreBlob(immeubleNom, uniteNom, locataire, montants, total) {
@@ -1417,7 +1433,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v38";
+const APP_VERSION = "v39";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1582,6 +1598,12 @@ function AideView() {
           Si les deux applications n'ont pas le même nom pour ce logement, l'application <b>te pose la
           question</b> avant de reprendre quoi que ce soit. Ta réponse est conservée : elle ne te sera
           plus jamais redemandée pour ce logement.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Sous les dégâts locatifs, un champ <b>Commentaire</b> permet d'écrire sur plusieurs lignes —
+          le détail des dégâts constatés, par exemple. <b>Ce texte figure sur le document remis au
+          locataire</b>, sous le tableau, et dans la liste des remboursements. Laisse-le vide si tu
+          n'as rien à ajouter : rien n'apparaîtra alors sur le document.
         </div>
         <div style={{ marginTop: 8 }}>
           <b>« Sauver remboursement » fait deux choses, dans cet ordre</b> (depuis la v32) :
@@ -2796,6 +2818,33 @@ function CasePaiement({ payeLe, onChange }) {
   );
 }
 
+// Commentaire libre, sous les degats locatifs. Il figure dans le document
+// remis au locataire : c'est la qu'on detaille les degats constates.
+const COMMENTAIRE_MAX = 1500;
+
+function ChampCommentaire({ valeur, onChange }) {
+  const texte = valeur || "";
+  const reste = COMMENTAIRE_MAX - texte.length;
+  return (
+    <div style={{ marginTop: 10 }}>
+      <span className="label">Commentaire (figure sur le document remis au locataire)</span>
+      <textarea
+        value={texte}
+        onChange={e => onChange(e.target.value.slice(0, COMMENTAIRE_MAX))}
+        rows={4}
+        placeholder={"Détail des dégâts constatés, remarques…\nVous pouvez écrire sur plusieurs lignes."}
+        style={{
+          width: "100%", boxSizing: "border-box", resize: "vertical",
+          fontFamily: "inherit", fontSize: 14, lineHeight: 1.5,
+          padding: "8px 10px", borderRadius: 8, border: `1px solid ${LINE}`,
+        }} />
+      <div style={{ fontSize: 11.5, color: reste < 100 ? "#b45309" : MUTED, marginTop: 2 }}>
+        {texte.length ? reste + " caractères restants" : "Laissez vide si vous n'avez rien à ajouter."}
+      </div>
+    </div>
+  );
+}
+
 function IstaRow({ data, setData, building, unitId }) {
   const ista = (data.ista || []).find(i => i.building === building && i.unit === unitId);
   const [open, setOpen] = useState(false);
@@ -3786,6 +3835,12 @@ function DecomptesView({ data, setData, building }) {
           <button className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 12 }}
             onClick={() => supprimer(l)}>Supprimer</button>
         </div>
+        {l.montants.commentaire && (
+          <div style={{ fontSize: 12.5, color: INK, marginTop: 6, lineHeight: 1.5, whiteSpace: "pre-wrap",
+            background: PAPER, borderRadius: 6, padding: "6px 8px" }}>
+            {l.montants.commentaire}
+          </div>
+        )}
         <div style={{ fontSize: 11.5, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
           Garantie {fmtEUR(l.montants.garantie || 0)}
           {(l.montants.retardLoyer || 0) ? " · retard loyer − " + fmtEUR(l.montants.retardLoyer) : ""}
@@ -3961,6 +4016,9 @@ function DecomptesView({ data, setData, building }) {
                       onTexte={txt => saisirAutre(champ, txt)}
                       onSortie={() => quitterAutre(champ)} />
                   ))}
+
+                  <ChampCommentaire valeur={autMontants.commentaire}
+                    onChange={txt => autCle && majAutre(autCle, { commentaire: txt })} />
 
                   <div style={{ fontSize: 12, color: MUTED, marginTop: 8, lineHeight: 1.5 }}>
                     Garantie − retard de loyer − retard d'assurance − dégâts.
@@ -4279,6 +4337,9 @@ function DecomptesView({ data, setData, building }) {
               onTexte={txt => saisirRemboursement(champ, txt)}
               onSortie={() => quitterRemboursement(champ)} />
           ))}
+
+          <ChampCommentaire valeur={remb.commentaire}
+            onChange={txt => majRemboursement({ commentaire: txt })} />
 
           <div style={{ fontSize: 12, color: MUTED, marginTop: 8, lineHeight: 1.5 }}>
             Garantie − retard de loyer − retard d'assurance + décompte − dégâts.
