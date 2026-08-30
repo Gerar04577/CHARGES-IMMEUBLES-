@@ -1433,7 +1433,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v40";
+const APP_VERSION = "v41";
 
 function TopBar({ tab }) {
   const titles = {
@@ -2236,12 +2236,21 @@ function BuildingsView({ data, setData, building }) {
   };
 
   const updateTariff = (key, value) => {
-    // Virgule francaise acceptee, et une saisie invalide ne devient JAMAIS zero
-    // en silence : on laisse le tarif inchange.
+    // Les tarifs sont ranges PAR IMMEUBLE : tariffs[building][key]. Une version
+    // precedente ecrivait a la racine (tariffs[key]) : le tarif partait alors
+    // dans un endroit que personne ne lit, donc rien n'etait sauve ni recalcule.
     const r = analyserNombre(value);
+    // Virgule francaise acceptee ; une saisie invalide laisse le tarif INCHANGE
+    // plutot que de le mettre a zero en silence.
     if (r.vide || !r.valide || r.valeur < 0) return;
     const v = auCentime(r.valeur);
-    setData(prev => ({ ...prev, tariffs: { ...prev.tariffs, [key]: v } }));
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.tariffs) next.tariffs = {};
+      if (!next.tariffs[building]) next.tariffs[building] = deriveTariffs(next.meters, building);
+      next.tariffs[building][key] = v;
+      return next;
+    });
   };
 
   return (
