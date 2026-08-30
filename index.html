@@ -1434,7 +1434,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v44";
+const APP_VERSION = "v45";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1575,6 +1575,20 @@ function AideView() {
         elle ne se modifie que si le bail change, jamais pour corriger un décompte.</p>
         <p><b>Compteurs</b> — nouveaux relevés et tarifs.</p>
         <p style={{ marginBottom: 0 }}><b>Décomptes</b> — calcul annuel par logement, et génération du document Word.</p>
+      </Section>
+
+      <Section titre="Comment le nombre de mois est calculé">
+        La <b>provision de charges</b> et le <b>nettoyage</b> comptent le même nombre de mois :
+        la durée de la période, <b>arrondie au mois le plus proche</b>.
+        <div style={{ marginTop: 8 }}>
+          Entre 11 mois et demi et 12 mois et demi, cela fait <b>12 mois</b>. Un cas tombant
+          exactement sur la demie est arrondi <b>vers le bas</b> : 12,5 mois donnent 12.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <b>Exemples.</b> Du 27/08/2025 au 27/08/2026, un an pile : 12 mois.
+          Du 30/08/2024 au 12/09/2025, soit 12,42 mois : 12 mois.
+          Du 15/01/2025 au 10/06/2025, soit 4,84 mois : 5 mois.
+        </div>
       </Section>
 
       <Section titre="Le champ « Mois non payés »">
@@ -3518,21 +3532,37 @@ function DecomptesView({ data, setData, building }) {
 
   const days = Math.max(daysBetween(periodFrom, periodTo), 1);
 
-  // Compter les mois dont le 1er tombe dans la période [periodFrom, periodTo]
-  const countMonthsWithFirst = (from, to) => {
-    let count = 0;
-    const d = new Date(from);
-    d.setDate(1); // aller au 1er du mois courant
-    if (d < new Date(from)) d.setMonth(d.getMonth() + 1); // si avant from, passer au mois suivant
-    while (d <= new Date(to)) {
-      count++;
-      d.setMonth(d.getMonth() + 1);
-    }
-    return Math.max(count, 0);
+  // NOMBRE DE MOIS DE PROVISION
+  // ---------------------------------------------------------------------------
+  // Regle de Gerard : on arrondit la DUREE TOTALE au mois le plus proche.
+  // « Entre 11 mois et demi et 12 mois et demi, c'est 12 mois. »
+  // Un cas tombant pile au milieu (12,5) est arrondi vers le BAS, a 12.
+  //
+  // L'ancienne regle comptait les mois dont le 1er tombait dans la periode :
+  // un bail du 27/08/2025 au 27/08/2026 — un an pile — n'y donnait que 12 mois,
+  // mais un bail du 30/08/2024 au 12/09/2025 en donnait 13, et « tout mois
+  // entame est paye » en aurait donne 14. L'arrondi de la duree totale evite
+  // ces deux ecueils.
+  const dureeEnMois = (from, to) => {
+    const a = new Date(from), b = new Date(to);
+    // mois pleins ecoules, puis la fraction du mois entame
+    let mois = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+    const jourA = a.getDate(), jourB = b.getDate();
+    // longueur du mois de depart, pour exprimer l'ecart de quantieme en fraction
+    const joursMoisA = new Date(a.getFullYear(), a.getMonth() + 1, 0).getDate();
+    mois += (jourB - jourA) / joursMoisA;
+    return Math.max(mois, 0);
   };
-  const months = days / 30.44; // gardé pour compatibilité affichage
+
+  // Arrondi au mois le plus proche, la demie vers le BAS (12,5 -> 12).
+  const arrondiMois = (m) => {
+    const bas = Math.floor(m);
+    return (m - bas > 0.5) ? bas + 1 : bas;
+  };
+
+  const months = dureeEnMois(periodFrom, periodTo);
   const monthsDisplay = Math.round(months * 10) / 10;
-  const provisionMonths = countMonthsWithFirst(periodFrom, periodTo);
+  const provisionMonths = Math.max(arrondiMois(months), 0);
 
   // Ajustements enregistres pour CE logement et CETTE periode.
   const cleAjust = cleAjustement(building, unitId, periodFrom, periodTo);
@@ -3561,7 +3591,11 @@ function DecomptesView({ data, setData, building }) {
   // Cleaning fee: 10 EUR per whole month (a month started counts in full,
   // even for a tenant leaving early in the month) — distinct from the
   // proportional provision calculation above.
-  const cleaningMonths = Math.max(1, Math.ceil(months));
+  // MEME REGLE que la provision : la duree totale arrondie au mois le plus
+  // proche. Math.ceil arrondissait toujours vers le HAUT — 12,42 mois de
+  // location donnaient 13 mois de nettoyage alors que la provision en
+  // comptait 12. Les deux lignes doivent compter pareil.
+  const cleaningMonths = Math.max(1, arrondiMois(months));
   const cleaningCost = (unit.cleaningMonthly || 0) * cleaningMonths;
   eauCost += cleaningCost;
 
