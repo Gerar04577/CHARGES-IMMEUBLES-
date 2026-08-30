@@ -795,6 +795,7 @@ const PAPER = "#F6F2EA";
 const CARD = "#FFFFFF";
 const ACCENT = "#C2842E";
 const RED = "#C0392B";
+const VERT_GAIN = "#1B7F4B";   // ecart a l'avantage de Gerard
 const TEXT = "#2B2B28";
 const MUTED = "#8A8478";
 const LINE = "#E4DDD0";
@@ -1433,7 +1434,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v42";
+const APP_VERSION = "v43";
 
 function TopBar({ tab }) {
   const titles = {
@@ -2486,7 +2487,13 @@ function getAdjustment(data, building, type) {
 function BilanRow({ label, gen, ind, unit, adjustment }) {
   const diffConso = gen.conso - ind.conso;
   const diffCost = gen.cost - ind.cost;
-  const offColor = Math.abs(diffCost) > Math.max(5, gen.cost * 0.05) ? RED : INK;
+  // Ecart POSITIF (le general depasse les individuels) = consommation ou coût
+  // non refacture = PERTE = rouge. Ecart NEGATIF = a l'avantage de Gerard = vert.
+  const significatif = Math.abs(diffCost) > Math.max(5, gen.cost * 0.05);
+  const couleurEcart = (ecart) => {
+    if (!significatif) return INK;
+    return ecart > 0 ? RED : VERT_GAIN;
+  };
   const adjusted = adjustment && adjustment.mode !== "none";
   const f = adjustment ? adjustment.factor : 1;
   return (
@@ -2500,8 +2507,8 @@ function BilanRow({ label, gen, ind, unit, adjustment }) {
             <tr><td>Compteurs individuels ({ind.n})</td><td>{fmtNum(ind.conso, 1)}</td><td>{fmtEUR(ind.cost)}</td></tr>
             <tr style={{ fontWeight: 700 }}>
               <td>Écart</td>
-              <td style={{ color: offColor }}>{fmtNum(diffConso, 1)}</td>
-              <td style={{ color: offColor }}>{fmtEUR(diffCost)}</td>
+              <td style={{ color: couleurEcart(diffConso) }}>{fmtNum(diffConso, 1)}</td>
+              <td style={{ color: couleurEcart(diffCost) }}>{fmtEUR(diffCost)}</td>
             </tr>
             {adjusted && (
               <tr style={{ color: ACCENT, fontWeight: 700 }}>
@@ -2626,8 +2633,18 @@ function BilanCard({ data, setData, building, onShowReport }) {
 
   const genElecMeters = general.filter(m => m.type === "elec");
   const indElecMeters = units.filter(m => m.type === "elec");
-  const genEauMeters = general.filter(m => m.type === "eau");
-  const indEauMeters = units.filter(m => m.type === "eau");
+  // Un compteur peut etre marque « general » tout en mesurant la consommation
+  // de plusieurs logements : c'est le cas du compteur d'eau de passage de PTG,
+  // partage entre les studios 5 a 10. Il appartient au cote INDIVIDUEL du
+  // bilan, sinon on compare l'immeuble a lui-meme et l'ecart n'a aucun sens.
+  const idsPartages = new Set();
+  b.units.forEach(u => { if (u.sharedWaterPassage) idsPartages.add(u.sharedWaterPassage); });
+
+  const genEauMeters = general.filter(m => m.type === "eau" && !idsPartages.has(m.id));
+  const indEauMeters = [
+    ...units.filter(m => m.type === "eau"),
+    ...general.filter(m => m.type === "eau" && idsPartages.has(m.id)),
+  ];
 
   // Tarifs en vigueur pour CET immeuble.
   const tarifs = data.tariffs?.[building] || deriveTariffs(data.meters, building);
@@ -2687,6 +2704,12 @@ function BilanCard({ data, setData, building, onShowReport }) {
 
       <MissingAlert info={missingEau} />
       <BilanRow label={`Eau (${generalCount.eau} compteur(s) général/aux)`} gen={genEau} ind={indEau} unit="m³" adjustment={getAdjustment(data, building, "eau")} />
+      {idsPartages.size > 0 && (
+        <div style={{ fontSize: 12, color: MUTED, marginTop: -8, marginBottom: 14, lineHeight: 1.5 }}>
+          Le compteur d'eau de passage est compté avec les <b>individuels</b> : il mesure la
+          consommation de plusieurs studios, répartie entre eux dans les décomptes.
+        </div>
+      )}
       <AdjustmentBlock data={data} setData={setData} building={building} type="eau" gen={genEau} ind={indEau} label="Ajustement Eau" unitLabel="m³" nUnits={nUnits} onShowReport={onShowReport} />
 
       {genGaz.length > 0 && (
