@@ -1433,7 +1433,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v39";
+const APP_VERSION = "v40";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1769,6 +1769,33 @@ function AideView() {
         <div style={{ marginTop: 8 }}>
           Comme partout ailleurs, une facture ajoutée n'est enregistrée que par le bouton habituel
           de sauvegarde OneDrive.
+        </div>
+      </Section>
+
+      <Section titre="L'alerte « compteurs pas encore relevés »">
+        Dans l'onglet <b>Compteurs</b>, le bilan compare les compteurs généraux à la somme des
+        compteurs individuels. Un bandeau orange signale ceux qui manquent.
+        <div style={{ marginTop: 8 }}>
+          <b>Ce sont les compteurs généraux qui donnent le départ.</b> Tant qu'ils ne sont pas relevés,
+          aucune alerte n'apparaît.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Une fois les généraux relevés, un compteur individuel est considéré à jour si son relevé
+          tombe entre le <b>1er du mois</b> du relevé général et le <b>7 du mois suivant</b>.
+          Les généraux étant relevés en août — rentrée universitaire — la fenêtre va donc
+          du <b>1er août au 7 septembre</b>.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Si les compteurs généraux n'ont pas tous la même date, c'est <b>le plus ancien</b> qui fait
+          référence.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Passé le 7 septembre, un compteur toujours pas relevé <b>reste signalé</b> : cette date est
+          la limite de ce qu'on accepte comme relevé valable, pas la fin de l'alerte.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Le bandeau affiche les dates : celle du général, la fenêtre attendue, et le dernier relevé
+          de chaque compteur en retard. Vous voyez ainsi tout de suite pourquoi il se déclenche.
         </div>
       </Section>
 
@@ -2360,20 +2387,70 @@ function sumLastInterval(meters) {
 // Compare chaque compteur individuel (déjà existant pour ce type/immeuble) à
 // la date du dernier relevé du/des compteur(s) général/aux correspondant(s).
 // "Pas à jour" = dernier relevé antérieur à celui du général le plus récent.
+/* ---------------------------------------------------------------------------
+   COMPTEURS INDIVIDUELS PAS ENCORE RELEVES
+   ---------------------------------------------------------------------------
+   Ce sont les COMPTEURS GENERAUX qui donnent le depart des alertes : tant
+   qu'ils ne sont pas releves, rien n'est signale.
+
+   Une fois releves, la reference est le relevé general LE PLUS ANCIEN (et non
+   le plus recent : les quatre generaux de Biche ne sont pas releves le meme
+   jour, et prendre le plus recent faisait passer pour « en retard » tous les
+   studios releves lors de la meme campagne).
+
+   Un relevé individuel est accepte s'il tombe du 1er du mois du relevé general
+   jusqu'au 7 du mois suivant. Chez Gerard les generaux sont releves en aout,
+   rentree universitaire oblige : la fenetre va donc du 1er aout au 7 septembre.
+
+   Passe le 7, un compteur jamais relevé RESTE signale : cette date est la
+   limite de ce qu'on accepte comme relevé valable, pas la fin de l'alerte.
+   --------------------------------------------------------------------------- */
+
+// Debut de la fenetre : le 1er du mois du relevé general.
+function debutFenetreReleve(dateGenerale) {
+  return String(dateGenerale).slice(0, 7) + "-01";
+}
+
+// Fin de la fenetre : le 7 du mois SUIVANT.
+function finFenetreReleve(dateGenerale) {
+  const annee = Number(String(dateGenerale).slice(0, 4));
+  const mois = Number(String(dateGenerale).slice(5, 7));
+  const anneeSuivante = mois === 12 ? annee + 1 : annee;
+  const moisSuivant = mois === 12 ? 1 : mois + 1;
+  return anneeSuivante + "-" + ("0" + moisSuivant).slice(-2) + "-07";
+}
+
 function missingUpToDateMeters(data, building, type, unitNames) {
   const meters = data.meters.filter(m => m.building === building && m.type === type);
   const general = meters.filter(m => m.scope === "general");
   const individual = meters.filter(m => m.scope === "unit");
-  if (individual.length === 0) return { total: 0, missing: 0, names: [] };
-  const generalDates = general.map(m => m.readings[m.readings.length - 1]?.[0]).filter(Boolean);
-  if (generalDates.length === 0) return { total: individual.length, missing: 0, names: [] };
-  const generalLastDate = generalDates.slice().sort().slice(-1)[0];
-  const names = [];
+  const vide = { total: 0, missing: 0, names: [], details: [], reference: null, debut: null, fin: null };
+  if (individual.length === 0) return vide;
+
+  const generalDates = general
+    .map(m => (Array.isArray(m.readings) && m.readings.length) ? m.readings[m.readings.length - 1][0] : null)
+    .filter(Boolean);
+  // Aucun general relevé : les alertes ne sont pas encore parties.
+  if (generalDates.length === 0) {
+    return { total: individual.length, missing: 0, names: [], details: [], reference: null, debut: null, fin: null };
+  }
+
+  // LE PLUS ANCIEN des relevés generaux fixe la reference.
+  const reference = generalDates.slice().sort()[0];
+  const debut = debutFenetreReleve(reference);
+  const fin = finFenetreReleve(reference);
+
+  const names = [], details = [];
   individual.forEach(m => {
-    const last = m.readings[m.readings.length - 1]?.[0];
-    if (!last || last < generalLastDate) names.push(unitNames?.[m.unit] || m.unit);
+    const last = (Array.isArray(m.readings) && m.readings.length) ? m.readings[m.readings.length - 1][0] : null;
+    const aJour = last && last >= debut && last <= fin;
+    if (!aJour) {
+      const nom = (unitNames && unitNames[m.unit]) || m.unit;
+      names.push(nom);
+      details.push({ nom, dernier: last || null });
+    }
   });
-  return { total: individual.length, missing: names.length, names };
+  return { total: individual.length, missing: names.length, names, details, reference, debut, fin };
 }
 
 function getAdjustment(data, building, type) {
@@ -2533,8 +2610,21 @@ function BilanCard({ data, setData, building, onShowReport }) {
   const MissingAlert = ({ info }) => {
     if (!info || info.missing === 0) return null;
     return (
-      <div style={{ fontSize: 12, color: ACCENT, fontWeight: 700, marginBottom: 8, padding: 8, background: "#FBF2E4", borderRadius: 8 }}>
-        ⚠️ {info.missing} compteur{info.missing > 1 ? "s" : ""} individuel{info.missing > 1 ? "s" : ""} pas encore relevé{info.missing > 1 ? "s" : ""} pour cette période ({info.names.join(", ")})
+      <div style={{ fontSize: 12, color: ACCENT, marginBottom: 8, padding: 8, background: "#FBF2E4", borderRadius: 8, lineHeight: 1.6 }}>
+        <div style={{ fontWeight: 700 }}>
+          ⚠️ {info.missing} compteur{info.missing > 1 ? "s" : ""} individuel{info.missing > 1 ? "s" : ""} pas encore relevé{info.missing > 1 ? "s" : ""}
+        </div>
+        <div style={{ fontWeight: 400, marginTop: 2 }}>
+          Compteur général relevé le <b>{fmtDate(info.reference)}</b> — relevés attendus
+          du <b>{fmtDate(info.debut)}</b> au <b>{fmtDate(info.fin)}</b>.
+        </div>
+        <div style={{ fontWeight: 400, marginTop: 4 }}>
+          {info.details.map((d, i) => (
+            <div key={i}>
+              • {d.nom} — {d.dernier ? "dernier relevé le " + fmtDate(d.dernier) : "aucun relevé"}
+            </div>
+          ))}
+        </div>
       </div>
     );
   };
