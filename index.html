@@ -1434,7 +1434,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v43";
+const APP_VERSION = "v44";
 
 function TopBar({ tab }) {
   const titles = {
@@ -2385,6 +2385,7 @@ function UnitCard({ unit, onUpdate, onTenantChange }) {
   );
 }
 
+
 // Cout recalcule au tarif en vigueur, plutot qu'au tarif fige dans le relevé.
 // tarifParUnite null = on garde le cout d'origine du relevé.
 function sumLastIntervalAuTarif(meters, tarifParUnite) {
@@ -2489,11 +2490,11 @@ function BilanRow({ label, gen, ind, unit, adjustment }) {
   const diffCost = gen.cost - ind.cost;
   // Ecart POSITIF (le general depasse les individuels) = consommation ou coût
   // non refacture = PERTE = rouge. Ecart NEGATIF = a l'avantage de Gerard = vert.
-  const significatif = Math.abs(diffCost) > Math.max(5, gen.cost * 0.05);
-  const couleurEcart = (ecart) => {
-    if (!significatif) return INK;
-    return ecart > 0 ? RED : VERT_GAIN;
-  };
+  // AUCUN seuil, AUCUNE couleur neutre : chaque colonne dit la verite de son
+  // propre signe. Les deux colonnes peuvent donc etre de couleurs differentes,
+  // et c'est justement ce qu'il faut voir — a PTG, Gerard perd 1 762 kWh mais
+  // gagne 84,60 € grace a sa marge.
+  const couleurEcart = (ecart) => (ecart > 0 ? RED : VERT_GAIN);
   const adjusted = adjustment && adjustment.mode !== "none";
   const f = adjustment ? adjustment.factor : 1;
   return (
@@ -2528,7 +2529,11 @@ function AdjustmentBlock({ data, setData, building, type, gen, ind, label, unitL
   const adjustment = getAdjustment(data, building, type);
   const diffCost = gen.cost - ind.cost;
   const diffConso = gen.conso - ind.conso;
-  const significant = ind.cost > 0 && Math.abs(diffCost) > Math.max(5, gen.cost * 0.05);
+  // Un ecart important sur la CONSOMMATION ou sur le COUT suffit. Ne regarder
+  // que le coût masquait les pertes de consommation quand la marge les compense.
+  const ecartCoutFort = ind.cost > 0 && Math.abs(diffCost) > Math.max(5, gen.cost * 0.05);
+  const ecartConsoFort = ind.conso > 0 && Math.abs(diffConso) > Math.max(1, gen.conso * 0.05);
+  const significant = ecartCoutFort || ecartConsoFort;
   const coverage = nUnits > 0 ? ind.n / nUnits : 0;
   const lowCoverage = coverage < 0.4;
 
@@ -2649,6 +2654,8 @@ function BilanCard({ data, setData, building, onShowReport }) {
   // Tarifs en vigueur pour CET immeuble.
   const tarifs = data.tariffs?.[building] || deriveTariffs(data.meters, building);
   // Generaux au tarif proprietaire, individuels au tarif locataire.
+  // Jour et nuit sont au MEME tarif chez Gerard, dans tous les immeubles, et les
+  // compteurs individuels melangent les deux : un seul tarif s'applique donc.
   const genElec = sumLastIntervalAuTarif(genElecMeters, tarifs.elecJour);
   const indElec = sumLastIntervalAuTarif(indElecMeters, tarifs.studentElec);
   const genEau = sumLastIntervalAuTarif(genEauMeters, tarifs.eau);
