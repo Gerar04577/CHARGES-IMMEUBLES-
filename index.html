@@ -1433,7 +1433,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v41";
+const APP_VERSION = "v42";
 
 function TopBar({ tab }) {
   const titles = {
@@ -2384,6 +2384,22 @@ function UnitCard({ unit, onUpdate, onTenantChange }) {
   );
 }
 
+// Cout recalcule au tarif en vigueur, plutot qu'au tarif fige dans le relevé.
+// tarifParUnite null = on garde le cout d'origine du relevé.
+function sumLastIntervalAuTarif(meters, tarifParUnite) {
+  let conso = 0, cost = 0, n = 0;
+  meters.forEach(m => {
+    const li = lastInterval(m.readings);
+    if (!li) return;
+    conso += li.conso;
+    cost += (tarifParUnite === null || tarifParUnite === undefined)
+      ? li.cost
+      : li.conso * tarifParUnite;
+    n++;
+  });
+  return { conso, cost: Math.round(cost * 100) / 100, n };
+}
+
 function sumLastInterval(meters) {
   let conso = 0, cost = 0, n = 0;
   meters.forEach(m => {
@@ -2523,6 +2539,16 @@ function AdjustmentBlock({ data, setData, building, type, gen, ind, label, unitL
   };
   const reset = () => apply("none", 1);
 
+  // Remise a zero avec confirmation : elle change les montants de TOUS les
+  // logements de l'immeuble pour ce poste.
+  const resetConfirme = () => {
+    if (adjustment.mode === "none") return;
+    if (!window.confirm("Remettre l'ajustement " + type + " de cet immeuble à ×1 ?\n\n"
+      + "Les décomptes reprendront les valeurs brutes des compteurs individuels. "
+      + "Les périodes déjà archivées ne sont pas touchées.")) return;
+    reset();
+  };
+
   if (!significant && adjustment.mode === "none") return null;
 
   if (lowCoverage) {
@@ -2535,9 +2561,10 @@ function AdjustmentBlock({ data, setData, building, type, gen, ind, label, unitL
           ne sont pas couverts). Pas d'ajustement automatique proposé ici ; utilisez la quote-part
           manuelle ou les factures ISTA dans "Décomptes" pour les logements sans compteur.
         </div>
-        {adjustment.mode !== "none" && (
-          <button className="btn btn-ghost" style={{ marginTop: 8 }} onClick={reset}><X size={14} /> Annuler l'ajustement existant</button>
-        )}
+        <button className="btn btn-ghost" style={{ marginTop: 8 }} onClick={resetConfirme}
+          disabled={adjustment.mode === "none"}>
+          <X size={14} /> Remettre à ×1
+        </button>
       </div>
     );
   }
@@ -2575,9 +2602,9 @@ function AdjustmentBlock({ data, setData, building, type, gen, ind, label, unitL
         <button className={`btn ${adjustment.mode === "conso" ? "btn-primary" : "btn-ghost"}`} onClick={() => apply("conso", consoFactor)}>
           Ajuster la consommation (×{fmtNum(consoFactor, 3)})
         </button>
-        {adjustment.mode !== "none" && (
-          <button className="btn btn-ghost" onClick={reset}><X size={14} /> Annuler</button>
-        )}
+        <button className="btn btn-ghost" onClick={resetConfirme} disabled={adjustment.mode === "none"}>
+          <X size={14} /> Remettre à ×1
+        </button>
       </div>
       <div style={{ fontSize: 12, color: adjustment.mode !== "none" ? ACCENT : MUTED, marginTop: 8, fontWeight: adjustment.mode !== "none" ? 700 : 400 }}>
         {adjustment.mode === "price" && `Actif : chaque logement voit son coût ${type} multiplié par ${fmtNum(priceFactor, 3)} dans les décomptes.`}
@@ -2602,10 +2629,13 @@ function BilanCard({ data, setData, building, onShowReport }) {
   const genEauMeters = general.filter(m => m.type === "eau");
   const indEauMeters = units.filter(m => m.type === "eau");
 
-  const genElec = sumLastInterval(genElecMeters);
-  const indElec = sumLastInterval(indElecMeters);
-  const genEau = sumLastInterval(genEauMeters);
-  const indEau = sumLastInterval(indEauMeters);
+  // Tarifs en vigueur pour CET immeuble.
+  const tarifs = data.tariffs?.[building] || deriveTariffs(data.meters, building);
+  // Generaux au tarif proprietaire, individuels au tarif locataire.
+  const genElec = sumLastIntervalAuTarif(genElecMeters, tarifs.elecJour);
+  const indElec = sumLastIntervalAuTarif(indElecMeters, tarifs.studentElec);
+  const genEau = sumLastIntervalAuTarif(genEauMeters, tarifs.eau);
+  const indEau = sumLastIntervalAuTarif(indEauMeters, tarifs.studentEau);
   const genGaz = general.filter(m => m.type === "gaz");
   const gazSum = sumLastInterval(genGaz);
 
@@ -2641,6 +2671,11 @@ function BilanCard({ data, setData, building, onShowReport }) {
   return (
     <div className="card">
       <div style={{ fontWeight: 700, marginBottom: 4 }}>Bilan — compteurs généraux vs individuels</div>
+      <div style={{ fontSize: 12, color: MUTED, marginBottom: 8, lineHeight: 1.5 }}>
+        Coûts calculés aux <b>tarifs en vigueur de cet immeuble</b> : les compteurs généraux au tarif
+        propriétaire, les individuels au tarif locataire. Changez un tarif dans l'onglet Immeubles,
+        revenez ici, et appuyez à nouveau sur le bouton d'ajustement pour le recalculer.
+      </div>
       <div style={{ fontSize: 12, color: MUTED, marginBottom: 12 }}>
         Comparaison sur la dernière période relevée pour chaque compteur. Un écart important (en{" "}
         <span style={{ color: RED, fontWeight: 700 }}>rouge</span>) peut indiquer une fuite, un vol, ou un relevé manquant.
