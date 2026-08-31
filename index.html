@@ -1455,7 +1455,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v48";
+const APP_VERSION = "v50";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1888,13 +1888,21 @@ function AideView() {
         Le bouton <b>📋 Liste des remboursements</b>, dans l'onglet Décomptes, réunit
         <b> tous les immeubles</b> en deux groupes :
         <div style={{ marginTop: 8 }}>
-          <b>Remboursés</b> — ceux dont vous avez coché la case, avec leur date et le total.<br />
-          <b>Préparés, pas encore remboursés</b> — tout le reste.
+          Elle ne contient que les remboursements <b>réellement effectués</b> : ceux dont vous avez
+          coché la case. Une liste de préparations n'apporterait rien.
         </div>
         <div style={{ marginTop: 8 }}>
           La case <b>« Remboursé »</b> se trouve dans le panneau de remboursement, sous le total.
-          Cochez-la <b>quand l'argent est réellement parti</b>, et indiquez la date. Tant qu'elle
-          est vide, la ligne reste dans le second groupe.
+          Cochez-la <b>quand l'argent est réellement parti</b>, et indiquez la date.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <b>Au moment où vous cochez, le montant affiché est figé</b> — c'est celui que vous avez
+          versé, décompte de charges compris. Il n'est jamais recalculé ensuite.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Tant que la case n'est pas cochée, le total bouge librement selon ce que vous saisissez.
+          Si vous modifiez un montant <b>après</b> avoir coché, rien n'est défait, mais l'écran vous
+          signale l'écart : <b>décochez puis recochez</b> pour enregistrer le nouveau montant.
         </div>
         <div style={{ marginTop: 8 }}>
           Chaque ligne a un bouton <b>Supprimer</b>, avec confirmation : il sert à effacer
@@ -3170,11 +3178,6 @@ const REFERENCE_ISTA = {
 
 const referenceIsta = (building, unitId) => REFERENCE_ISTA[building + "|" + unitId] || null;
 
-// Une entree de remboursement est « payee » quand Gerard a coche la case et
-// indique la date. Tant qu'elle ne l'est pas, ce n'est qu'une preparation —
-// ou un essai. C'est la SEULE facon de distinguer les deux.
-const estPaye = (m) => !!(m && m.payeLe);
-
 // Toutes les entrees de remboursement, les deux sortes reunies, pour la liste.
 function listeRemboursements(data) {
   const lignes = [];
@@ -3191,7 +3194,9 @@ function listeRemboursements(data) {
       nomLogement: (u && u.name) || logement,
       locataire: (u && u.tenant) || "",
       periode: (du && au) ? (fmtDate(du) + " – " + fmtDate(au)) : "",
-      montants: m, total: totalRemboursement(m, m.decompte || 0),
+      // Le montant AFFICHE au moment de la coche, jamais recalcule : le decompte
+      // de charges n'est pas enregistre, un recalcul l'oublierait.
+      montants: m, total: m.montantRembourse,
       payeLe: m.payeLe || null,
     });
   }
@@ -3203,19 +3208,28 @@ function listeRemboursements(data) {
       nomImmeuble: NOM_AUTRE_IMMEUBLE[immeuble] || immeuble,
       nomLogement: logement, locataire: m.locataire || "",
       periode: "",
-      montants: m, total: totalAutreImmeuble(m),
+      montants: m, total: m.montantRembourse,
       payeLe: m.payeLe || null,
     });
   }
 
-  // Les plus recemment payes en tete ; les non payes ensuite.
-  lignes.sort((a, b) => String(b.payeLe || "").localeCompare(String(a.payeLe || "")));
-  return lignes;
+  // SEULS LES REMBOURSEMENTS REELLEMENT EFFECTUES. Une liste de preparations
+  // n'apporte rien, et son total serait faux faute de decompte enregistre.
+  const payes = lignes.filter(l => l.payeLe && typeof l.total === "number");
+  payes.sort((a, b) => String(b.payeLe).localeCompare(String(a.payeLe)));
+  return payes;
 }
 
 // Case « Remboursé le … », commune aux deux panneaux.
-function CasePaiement({ payeLe, onChange }) {
+function CasePaiement({ payeLe, onChange, totalActuel, montantRembourse }) {
   const coche = !!payeLe;
+  // Un montant modifie APRES la coche : on ne decoche pas tout seul — defaire
+  // une action volontaire est plus dangereux qu'un ecart affiche — mais on le
+  // DIT, chiffres a l'appui.
+  const aChange = coche
+    && typeof montantRembourse === "number"
+    && typeof totalActuel === "number"
+    && Math.abs(montantRembourse - totalActuel) >= 0.01;
   return (
     <div style={{ marginTop: 10, background: "#fff", borderRadius: 8, padding: "10px 12px" }}>
       <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontWeight: 700, fontSize: 13.5 }}>
@@ -3228,6 +3242,15 @@ function CasePaiement({ payeLe, onChange }) {
         <div style={{ marginTop: 8 }}>
           <span className="label">Date du remboursement</span>
           <input type="date" value={payeLe} onChange={e => onChange(e.target.value || todayISO())} />
+        </div>
+      )}
+      {coche && typeof montantRembourse === "number" && (
+        <div style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.5, color: aChange ? "#b45309" : MUTED }}>
+          {aChange
+            ? <span>⚠️ Montant remboursé enregistré : <b>{fmtEUR(montantRembourse)}</b>.
+                Le total a changé depuis ({fmtEUR(totalActuel)}). Décochez puis recochez pour
+                enregistrer le nouveau montant.</span>
+            : <span>Montant remboursé enregistré : <b>{fmtEUR(montantRembourse)}</b>.</span>}
         </div>
       )}
       <div style={{ fontSize: 12, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
@@ -4242,8 +4265,8 @@ function DecomptesView({ data, setData, building }) {
 
   if (listeOuverte) {
     const lignes = listeRemboursements(data);
-    const payes = lignes.filter(l => estPaye(l.montants));
-    const enAttente = lignes.filter(l => !estPaye(l.montants));
+    // listeRemboursements ne renvoie deja QUE les remboursements effectues.
+    const payes = lignes;
     const somme = (t) => Math.round(t.reduce((s, l) => s + (l.total || 0), 0) * 100) / 100;
 
     const supprimer = (ligne) => {
@@ -4287,7 +4310,11 @@ function DecomptesView({ data, setData, building }) {
           Garantie {fmtEUR(l.montants.garantie || 0)}
           {(l.montants.retardLoyer || 0) ? " · retard loyer − " + fmtEUR(l.montants.retardLoyer) : ""}
           {(l.montants.retardAssurance || 0) ? " · retard assurance − " + fmtEUR(l.montants.retardAssurance) : ""}
-          {l.sorte === "decompte" && (l.montants.decompte || 0) ? " · décompte " + fmtEUR(l.montants.decompte) : ""}
+          {l.sorte === "decompte" && typeof l.montants.decompteUtilise === "number" && l.montants.decompteUtilise !== 0
+            ? (l.montants.decompteUtilise < 0
+                ? " · décompte − " + fmtEUR(Math.abs(l.montants.decompteUtilise))
+                : " · décompte + " + fmtEUR(l.montants.decompteUtilise))
+            : ""}
           {(l.montants.degats || 0) ? " · dégâts − " + fmtEUR(l.montants.degats) : ""}
         </div>
       </div>
@@ -4305,35 +4332,28 @@ function DecomptesView({ data, setData, building }) {
           Liste des remboursements
         </div>
         <div style={{ fontSize: 13, color: MUTED, marginBottom: 16, lineHeight: 1.5 }}>
-          Tous immeubles confondus. Une ligne passe dans « Remboursés » quand vous cochez la case
-          « Remboursé » dans son panneau.
+          Tous immeubles confondus. Une ligne apparaît ici <b>au moment où vous cochez</b>
+          « Remboursé » dans son panneau, avec le montant affiché à cet instant — celui que vous
+          avez réellement versé.
         </div>
 
         <div className="card">
           <div className="between" style={{ marginBottom: 4 }}>
-            <div style={{ fontWeight: 800 }}>Remboursés</div>
+            <div style={{ fontWeight: 800 }}>Remboursements effectués</div>
             <MeterDigits value={fmtEUR(somme(payes))} />
           </div>
           {payes.length === 0 && (
-            <div style={{ fontSize: 13, color: MUTED }}>Aucun remboursement marqué comme payé.</div>
+            <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5 }}>
+              Aucun remboursement effectué. Une ligne apparaît ici dès que vous cochez
+              « Remboursé » dans son panneau.
+            </div>
           )}
           {payes.map(l => <Ligne key={l.sorte + l.cle} l={l} />)}
         </div>
 
-        <div className="card">
-          <div className="between" style={{ marginBottom: 4 }}>
-            <div style={{ fontWeight: 800 }}>Préparés, pas encore remboursés</div>
-            <MeterDigits value={fmtEUR(somme(enAttente))} />
-          </div>
-          {enAttente.length === 0 && (
-            <div style={{ fontSize: 13, color: MUTED }}>Aucun remboursement en attente.</div>
-          )}
-          {enAttente.map(l => <Ligne key={l.sorte + l.cle} l={l} />)}
-        </div>
-
         <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.5, padding: "0 4px 12px" }}>
-          Les essais faits pendant la mise au point apparaissent ici : le bouton <b>Supprimer</b> les
-          retire définitivement. Toute modification n'est enregistrée que par
+          Le bouton <b>Supprimer</b> retire définitivement une ligne, par exemple un essai.
+          Toute modification n'est enregistrée que par
           « ☁️ Sauvegarde automatique OneDrive ».
         </div>
       </div>
@@ -4538,7 +4558,10 @@ function DecomptesView({ data, setData, building }) {
                   )}
 
                   <CasePaiement payeLe={autMontants.payeLe || null}
-                    onChange={d => autCle && majAutre(autCle, { payeLe: d })} />
+                    totalActuel={autTotal} montantRembourse={autMontants.montantRembourse}
+                    onChange={d => autCle && majAutre(autCle, d
+                      ? { payeLe: d, montantRembourse: autTotal }
+                      : { payeLe: null, montantRembourse: null })} />
 
                   <div style={{ fontSize: 12, color: MUTED, marginTop: 10, lineHeight: 1.5 }}>
                     Ces montants sont conservés : pensez à « ☁️ Sauvegarde automatique OneDrive »
@@ -4795,7 +4818,10 @@ function DecomptesView({ data, setData, building }) {
           </div>
 
           <CasePaiement payeLe={remb.payeLe || null}
-            onChange={dte => majRemboursement({ payeLe: dte })} />
+            totalActuel={rbTotal} montantRembourse={remb.montantRembourse}
+            onChange={dte => majRemboursement(dte
+              ? { payeLe: dte, montantRembourse: rbTotal, decompteUtilise: rbDecompte }
+              : { payeLe: null, montantRembourse: null, decompteUtilise: null })} />
 
           <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>
             Ces montants sont conservés : pensez à « ☁️ Sauvegarde automatique OneDrive » avant de fermer l'application.
