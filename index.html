@@ -1455,7 +1455,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v47";
+const APP_VERSION = "v48";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1833,6 +1833,196 @@ function AideView() {
         <div style={{ marginTop: 8 }}>
           Le bandeau affiche les dates : celle du général, la fenêtre attendue, et le dernier relevé
           de chaque compteur en retard. Vous voyez ainsi tout de suite pourquoi il se déclenche.
+        </div>
+      </Section>
+
+      <Section titre="Envoyer le décompte au locataire">
+        Le bouton <b>Envoyer</b> de l'aperçu du décompte ouvre une <b>seconde application</b>,
+        « Envoi Décomptes ». Ce sont deux applications distinctes, avec chacune ses propres
+        données : celle-ci connaît les logements et les compteurs, l'autre connaît les
+        <b>adresses mail</b> des locataires.
+        <div style={{ marginTop: 8 }}>
+          Envoi Décomptes a quatre onglets en bas : <b>Envoyer</b>, <b>ISTA</b>,
+          <b>Locataires</b>, <b>Config</b>.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <b>Pour corriger l'adresse d'un locataire :</b> onglet <b>Locataires</b>, choisissez
+          l'immeuble, touchez le nom — sa fiche s'ouvre avec le champ Email et celui du garant.
+          Si le garant est rempli, le décompte part <b>aux deux adresses</b>.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Cette adresse ne se trouve <b>pas</b> dans l'onglet Immeubles de cette application-ci :
+          on n'y change que le nom du locataire.
+        </div>
+      </Section>
+
+      <Section titre="Ce qui part, et où, quand vous envoyez">
+        L'envoi fait trois choses d'un coup, sans rien de plus à faire :
+        <div style={{ marginTop: 8 }}>
+          • le <b>mail au locataire</b>, avec le décompte Word en pièce jointe ;<br />
+          • pour Petite Guirlande, le <b>décompte ISTA</b> de ce locataire, joint lui aussi ;<br />
+          • et les <b>deux fichiers déposés sur OneDrive</b>.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Ils vont dans <b>SAUVEGARDE DECOMPTES / année / immeuble / logement</b>, par exemple
+          <i> SAUVEGARDE DECOMPTES / 2026 / Petite_Guirlande_PTG / Studio_4 /</i>, et portent le
+          même nom à l'extension près — l'heure de l'envoi comprise. Vous les retrouvez donc
+          côte à côte.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Le <b>remboursement</b> de la garantie, produit par cette application-ci, se range dans
+          le <b>même dossier</b>.
+        </div>
+      </Section>
+
+      <Section titre="L'année du dossier sur OneDrive">
+        C'est <b>l'année où vous envoyez</b>, jamais celle de la fin de période. Un décompte
+        établi en 2026 pour un bail terminé en 2025 se range donc dans le dossier <b>2026</b>.
+        <div style={{ marginTop: 8 }}>
+          C'est voulu : le décompte, le remboursement et le décompte ISTA d'un même envoi
+          se retrouvent ainsi <b>ensemble</b>, au lieu d'être éparpillés sur deux années.
+        </div>
+      </Section>
+
+      <Section titre="La liste des remboursements">
+        Le bouton <b>📋 Liste des remboursements</b>, dans l'onglet Décomptes, réunit
+        <b> tous les immeubles</b> en deux groupes :
+        <div style={{ marginTop: 8 }}>
+          <b>Remboursés</b> — ceux dont vous avez coché la case, avec leur date et le total.<br />
+          <b>Préparés, pas encore remboursés</b> — tout le reste.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          La case <b>« Remboursé »</b> se trouve dans le panneau de remboursement, sous le total.
+          Cochez-la <b>quand l'argent est réellement parti</b>, et indiquez la date. Tant qu'elle
+          est vide, la ligne reste dans le second groupe.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Chaque ligne a un bouton <b>Supprimer</b>, avec confirmation : il sert à effacer
+          définitivement les essais. Le document Word déjà déposé sur OneDrive n'est pas touché.
+        </div>
+      </Section>
+
+      <Section titre="Le bilan : compteurs généraux contre individuels">
+        Dans l'onglet <b>Compteurs</b>, le bilan compare ce qu'indique le compteur général de
+        l'immeuble à la <b>somme des compteurs individuels</b>. L'écart révèle une fuite, un vol,
+        un relevé manquant — ou simplement de la consommation non refacturée.
+        <div style={{ marginTop: 8 }}>
+          Les coûts sont calculés aux <b>tarifs en vigueur de l'immeuble</b> : les compteurs
+          généraux au <b>tarif propriétaire</b>, les individuels au <b>tarif locataire</b>.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Deux lignes sont affichées, la consommation et le coût, <b>chacune avec sa propre
+          couleur</b> : elles peuvent donc différer, et c'est justement l'information utile.
+        </div>
+      </Section>
+
+      <Section titre="Vert ou rouge : la règle est simple">
+        <b style={{ color: VERT_GAIN }}>Vert</b> : c'est à votre avantage — les compteurs
+        individuels dépassent le général, vous facturez plus que vous ne payez.
+        <div style={{ marginTop: 8 }}>
+          <b style={{ color: RED }}>Rouge</b> : c'est à votre désavantage — le général dépasse
+          les individuels, donc de la consommation ou du coût que personne ne vous rembourse.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Il n'y a <b>pas de troisième couleur</b> : toute valeur est verte ou rouge, quel que
+          soit son montant.
+        </div>
+      </Section>
+
+      <Section titre="Les deux tarifs, et à quoi ils servent">
+        Dans l'onglet <b>Immeubles</b>, chaque immeuble a ses propres tarifs.
+        <div style={{ marginTop: 8 }}>
+          <b>Tarif propriétaire</b> — ce que <b>vous</b> payez au fournisseur. Il sert à connaître
+          votre coût réel et à mesurer l'écart du bilan.<br />
+          <b>Tarif locataire</b> — ce que vous <b>facturez</b>. C'est lui qui entre dans les
+          décomptes.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Un tarif mal tapé n'est <b>jamais enregistré</b> : la valeur précédente est conservée
+          plutôt que remise à zéro. La virgule française est acceptée partout.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Changer un tarif ne réécrit <b>pas</b> les relevés déjà saisis : chacun garde le tarif
+          en vigueur au moment de sa saisie.
+        </div>
+      </Section>
+
+      <Section titre="Ajuster l'écart, et le remettre à zéro">
+        Quand l'écart est important, l'application propose deux façons de le répartir sur les
+        logements :
+        <div style={{ marginTop: 8 }}>
+          <b>Ajuster le prix</b> — on garde les consommations relevées, on corrige les coûts.<br />
+          <b>Ajuster la consommation</b> — on corrige les consommations, comme si chaque locataire
+          avait consommé un peu plus, ou un peu moins.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <b>Rien ne se fait tout seul.</b> Changez un tarif, revenez ici, et appuyez à nouveau
+          sur le bouton : le facteur proposé tient compte du nouveau tarif.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Deux boutons <b>« Remettre à ×1 »</b>, un par poste — électricité et eau — annulent
+          l'ajustement. Ils servent à <b>repartir propre chaque année</b>, les écarts variant d'une
+          année à l'autre. Les périodes déjà archivées ne sont jamais touchées.
+        </div>
+      </Section>
+
+      <Section titre="Saisir une facture ISTA">
+        Dans l'onglet <b>Compteurs</b>, sous chaque logement facturé par ISTA, le bandeau
+        <b> « Eau / chauffage (facture ISTA) »</b> se déplie sur l'historique.
+        <div style={{ marginTop: 8 }}>
+          <b>Pour ajouter la facture de l'année :</b> indiquez la date et le montant — celui de la
+          ligne <b>SOLDE</b> de la facture — puis appuyez sur <b>Ajouter</b>. Chaque ligne a un
+          bouton <b>Supprimer</b>, avec confirmation.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Comme partout, une facture ajoutée n'est enregistrée que par le bouton de sauvegarde
+          OneDrive.
+        </div>
+      </Section>
+
+      <Section titre="Le compteur d'eau de passage (Petite Guirlande)">
+        Le compteur <b>« Eau froide - bloc Studios (passage) »</b> ne mesure pas les parties
+        communes : il mesure la consommation des <b>studios 5 à 10</b>, répartie entre eux dans
+        les décomptes.
+        <div style={{ marginTop: 8 }}>
+          Dans le bilan, il est donc compté <b>avec les compteurs individuels</b>, pas avec les
+          généraux. Le compter du mauvais côté reviendrait à comparer l'immeuble à lui-même.
+        </div>
+      </Section>
+
+      <Section titre="Le réglage Make, à ne pas oublier">
+        Les documents n'arrivent au bon endroit que si Make est réglé en conséquence. À vérifier
+        si un fichier atterrit ailleurs, ou dans six mois quand on aura tout oublié.
+        <div style={{ marginTop: 8 }}>
+          Dans le scénario d'<b>Envoi Décomptes</b>, les <b>deux</b> modules OneDrive — celui du
+          Word et celui du décompte ISTA, derrière le filtre « ISTA uniquement » — doivent avoir
+          le même champ <b>Folder</b> :
+        </div>
+        <div style={{ marginTop: 6, fontFamily: "monospace", fontSize: 12.5, background: PAPER, borderRadius: 6, padding: "6px 8px" }}>
+          /SAUVEGARDE DECOMPTES&#123;&#123;1.folderPath&#125;&#125;
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Il n'y a <b>pas de barre oblique</b> entre les deux : l'application l'envoie déjà.
+          Si un seul des deux modules est réglé, le décompte ira au bon endroit et le décompte
+          ISTA ailleurs.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <b>Ne jamais</b> ajouter une route incomplète à un scénario en service, et
+          <b> ne jamais</b> déplacer charges-data.json à la main sur OneDrive.
+        </div>
+      </Section>
+
+      <Section titre="Le message « Immeuble introuvable »">
+        Il apparaît si l'immeuble affiché n'existe pas dans le fichier de données chargé —
+        fichier incomplet, ou modifié à la main.
+        <div style={{ marginTop: 8 }}>
+          <b>Que faire :</b> choisissez un autre immeuble pour vérifier que le reste fonctionne,
+          puis rechargez les données depuis OneDrive. Si le message persiste, le fichier est
+          abîmé : reprenez la dernière sauvegarde.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          L'application répare d'elle-même les défauts mineurs d'un fichier au chargement, mais
+          elle ne peut pas inventer un immeuble absent.
         </div>
       </Section>
 
