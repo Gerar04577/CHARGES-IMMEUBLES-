@@ -88,6 +88,22 @@ function HelpCircle(p) { return <Icon {...p}><circle cx="12" cy="12" r="10" /><p
 function UserPlus(p) { return <Icon {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" /></Icon>; }
 
 /* ---- minimal inline SVG line chart (replaces recharts) ---- */
+// Un immeuble absent du fichier de donnees ne doit pas donner un ecran blanc.
+function ImmeubleIntrouvable({ building }) {
+  return (
+    <div className="card" style={{ margin: 12 }}>
+      <div style={{ fontWeight: 800, marginBottom: 6 }}>Immeuble introuvable</div>
+      <div style={{ fontSize: 13.5, lineHeight: 1.6 }}>
+        L'immeuble « {String(building)} » n'existe pas dans le fichier de données actuellement chargé.
+        Cela arrive si le fichier a été modifié à la main ou s'il est incomplet.
+      </div>
+      <div style={{ fontSize: 13.5, lineHeight: 1.6, marginTop: 8 }}>
+        Rechargez les données depuis OneDrive, ou choisissez un autre immeuble.
+      </div>
+    </div>
+  );
+}
+
 function EvolutionChart({ readings, dataKey, color, unitLabel }) {
   // Ce Hook doit rester AVANT tout return anticipe (regles des Hooks React).
   const [hover, setHover] = useState(null);
@@ -347,14 +363,18 @@ function decompteEffectif(remb, decompteCalcule) {
   return (remb && remb.decompte !== null && remb.decompte !== undefined) ? remb.decompte : decompteCalcule;
 }
 
+// Un montant enregistre peut avoir ete abime (texte, null) : on ne renvoie
+// JAMAIS NaN, qui s'afficherait tel quel dans un document remis au locataire.
+const nombreSur = (v) => (typeof v === "number" && isFinite(v)) ? v : 0;
+
 function totalRemboursement(remb, decompteCalcule) {
   const r = remb || {};
-  const total = (r.garantie || 0)
-    - (r.retardLoyer || 0)
-    - (r.retardAssurance || 0)
+  const total = nombreSur(r.garantie)
+    - nombreSur(r.retardLoyer)
+    - nombreSur(r.retardAssurance)
     + decompteEffectif(r, decompteCalcule)
-    - (r.degats || 0);
-  return Math.round(total * 100) / 100;
+    - nombreSur(r.degats);
+  return Math.round(nombreSur(total) * 100) / 100;
 }
 
 // Chaque ligne du commentaire devient un paragraphe Word : un simple saut de
@@ -463,8 +483,8 @@ const cleAutre = (immeubleId, unite) => immeubleId + "|" + normaliserNomUnite(un
 // PAS de decompte dans cette formule : Gerard n'est pas responsable de ces charges.
 function totalAutreImmeuble(montants) {
   const m = montants || {};
-  const total = (m.garantie || 0) - (m.retardLoyer || 0) - (m.retardAssurance || 0) - (m.degats || 0);
-  return Math.round(total * 100) / 100;
+  const total = nombreSur(m.garantie) - nombreSur(m.retardLoyer) - nombreSur(m.retardAssurance) - nombreSur(m.degats);
+  return Math.round(nombreSur(total) * 100) / 100;
 }
 
 // Document Word SANS ligne « Décompte de charges ».
@@ -612,6 +632,7 @@ async function saveRemboursementOneDrive(buildingName, unitName, tenantName, per
 const IMMEUBLE_GESTION_LOYERS = { "petite-guirlande": "ptg", "biche": "biche", "nimy": "nimy" };
 
 function normaliserNomUnite(s) {
+  s = (s === null || s === undefined) ? "" : String(s);
   return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
 }
 
@@ -916,7 +937,7 @@ const fmtNum = (n, d = 0) => {
 };
 const fmtDate = (iso) => {
   if (!iso) return "—";
-  const [y, m, d] = iso.split("-");
+  const [y, m, d] = String(iso).split("-");
   return `${d}/${m}/${y}`;
 };
 const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
@@ -928,7 +949,7 @@ const TYPE_COLOR = { elec: ACCENT, eau: "#3E7CB1", gaz: RED };
 
 function deriveTariffs(meters, building) {
   const t = { eau: 6.5, elecJour: 0.6, elecNuit: 0.6, gaz: 0.6, studentEau: 6.5, studentElec: 0.6 };
-  meters.filter(m => m.building === building).forEach(m => {
+  meters.filter(m => m && m.building === building).forEach(m => {
     const last = m.readings[m.readings.length - 1];
     if (!last) return;
     const rate = last[2];
@@ -953,7 +974,7 @@ function lastInterval(readings) {
 }
 
 function unitMeters(meters, building, unitId, scope = "unit") {
-  return meters.filter(m => m.building === building && m.scope === scope && m.unit === unitId);
+  return meters.filter(m => m && m.building === building && m.scope === scope && m.unit === unitId);
 }
 
 /* ============================================================
@@ -1076,7 +1097,7 @@ async function downloadDecompteDoc(buildingName, unitName, tenantName, period, l
 
 // Sauvegarde automatique OneDrive via Make.com
 function cleanPath(str) {
-  return (str || "")
+  return String(str === null || str === undefined ? "" : str)
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, "_")
     .replace(/[^A-Za-z0-9_-]/g, "");
@@ -1434,7 +1455,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v45";
+const APP_VERSION = "v46";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1882,11 +1903,35 @@ let snapshotOneDrive = null;
 // l'ecran au lieu d'afficher quoi que ce soit.
 function garantirStructure(d) {
   if (!d || typeof d !== "object") return d;
-  if (Array.isArray(d.meters)) {
-    for (const m of d.meters) {
-      if (!Array.isArray(m.readings)) m.readings = [];
+
+  // Les listes DOIVENT etre des tableaux : si le fichier est abime et que
+  // data.meters vaut null ou autre chose, toutes les vues plantent — ecran
+  // blanc, sans message. On garantit la forme plutot que de s'en remettre
+  // a la bonne volonte du fichier.
+  if (!Array.isArray(d.meters)) d.meters = [];
+  // Une entree vide ou abimee ne doit pas faire planter la reparation
+  // elle-meme : on l'ecarte, et on complete les autres.
+  d.meters = d.meters.filter(m => m && typeof m === "object");
+  for (const m of d.meters) {
+    if (!Array.isArray(m.readings)) m.readings = [];
+  }
+
+  if (!Array.isArray(d.buildings)) d.buildings = [];
+  d.buildings = d.buildings.filter(b => b && typeof b === "object");
+  for (const b of d.buildings) {
+    if (!Array.isArray(b.units)) b.units = [];
+    b.units = b.units.filter(u => u && typeof u === "object");
+  }
+
+  // Les dictionnaires attendus par l'application
+  for (const cle of ["tariffs", "archives", "adjustments", "remboursements",
+                     "remboursementsAutres", "decisionsRemboursement"]) {
+    if (d[cle] !== undefined && (d[cle] === null || typeof d[cle] !== "object" || Array.isArray(d[cle]))) {
+      delete d[cle];
     }
   }
+  if (d.ista !== undefined && !Array.isArray(d.ista)) delete d.ista;
+
   return d;
 }
 
@@ -2222,6 +2267,7 @@ function Dashboard({ data, setData, onGo }) {
    ============================================================ */
 function BuildingsView({ data, setData, building }) {
   const b = data.buildings.find(x => x.id === building);
+  if (!b) return <ImmeubleIntrouvable building={building} />;
   const [editingTariffs, setEditingTariffs] = useState(true);
   const [editingStudentTariffs, setEditingStudentTariffs] = useState(true);
   const tariffs = data.tariffs?.[building] || deriveTariffs(data.meters, building);
@@ -2462,7 +2508,7 @@ function finFenetreReleve(dateGenerale) {
 }
 
 function missingUpToDateMeters(data, building, type, unitNames) {
-  const meters = data.meters.filter(m => m.building === building && m.type === type);
+  const meters = data.meters.filter(m => m && m.building === building && m.type === type);
   const general = meters.filter(m => m.scope === "general");
   const individual = meters.filter(m => m.scope === "unit");
   const vide = { total: 0, missing: 0, names: [], details: [], reference: null, debut: null, fin: null };
@@ -2646,7 +2692,8 @@ function AdjustmentBlock({ data, setData, building, type, gen, ind, label, unitL
 
 function BilanCard({ data, setData, building, onShowReport }) {
   const b = data.buildings.find(x => x.id === building);
-  const meters = data.meters.filter(m => m.building === building);
+  if (!b) return <ImmeubleIntrouvable building={building} />;
+  const meters = data.meters.filter(m => m && m.building === building);
   const general = meters.filter(m => m.scope === "general");
   const units = meters.filter(m => m.scope === "unit");
 
@@ -2753,7 +2800,8 @@ function BilanCard({ data, setData, building, onShowReport }) {
    ============================================================ */
 function ReportView({ data, building, type, onClose }) {
   const b = data.buildings.find(x => x.id === building);
-  const meters = data.meters.filter(m => m.building === building && m.type === type);
+  if (!b) return <ImmeubleIntrouvable building={building} />;
+  const meters = data.meters.filter(m => m && m.building === building && m.type === type);
   const general = meters.filter(m => m.scope === "general");
   const units = meters.filter(m => m.scope === "unit");
   const gen = sumLastInterval(general);
@@ -2771,7 +2819,7 @@ function ReportView({ data, building, type, onClose }) {
     return (
       <tr key={m.id}>
         <td>{unitName}</td>
-        <td>{m.label}</td>
+        <td>{String(m.label ?? "")}</td>
         <td>{li ? fmtDate(li.fromDate) : "—"}</td>
         <td>{li ? fmtDate(li.toDate) : "—"}</td>
         <td>{li ? fmtNum(li.conso, 1) : "—"}</td>
@@ -2863,7 +2911,8 @@ function ReportView({ data, building, type, onClose }) {
    ============================================================ */
 function MetersView({ data, setData, building }) {
   const b = data.buildings.find(x => x.id === building);
-  const general = data.meters.filter(m => m.building === building && m.scope === "general");
+  if (!b) return <ImmeubleIntrouvable building={building} />;
+  const general = data.meters.filter(m => m && m.building === building && m.scope === "general");
   const [selectedMeterId, setSelectedMeterId] = useState(null);
   const selectedMeter = selectedMeterId ? data.meters.find(m => m.id === selectedMeterId) : null;
   const [reportType, setReportType] = useState(null);
@@ -2885,7 +2934,7 @@ function MetersView({ data, setData, building }) {
         {general.length === 0 && <div style={{ fontSize: 13, color: MUTED }}>Aucun compteur commun.</div>}
       </div>
       {b.units.map(u => {
-        const ms = data.meters.filter(m => m.building === building && m.scope === "unit" && m.unit === u.id);
+        const ms = data.meters.filter(m => m && m.building === building && m.scope === "unit" && m.unit === u.id);
         // Un logement facture par ISTA doit apparaitre MEME sans compteur : c'est
         // le cas de l'Appartement 1er et du Duplex, dont l'electricite est
         // comprise dans l'ISTA. Le RDC Commercial, lui, n'est plus facture par
@@ -3024,7 +3073,7 @@ function ChampCommentaire({ valeur, onChange }) {
 }
 
 function IstaRow({ data, setData, building, unitId }) {
-  const ista = (data.ista || []).find(i => i.building === building && i.unit === unitId);
+  const ista = (data.ista || []).find(i => i && i.building === building && i.unit === unitId);
   const [open, setOpen] = useState(false);
   const [nouvelleDate, setNouvelleDate] = useState(todayISO());
   const [nouveauMontant, setNouveauMontant] = useState("");
@@ -3048,7 +3097,7 @@ function IstaRow({ data, setData, building, unitId }) {
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
       if (!Array.isArray(next.ista)) next.ista = [];
-      let entree = next.ista.find(i => i.building === building && i.unit === unitId);
+      let entree = next.ista.find(i => i && i.building === building && i.unit === unitId);
       if (!entree) {
         entree = { building, unit: unitId, label: "Eau / chauffage (facture ISTA)", invoices: [] };
         next.ista.push(entree);
@@ -3067,7 +3116,7 @@ function IstaRow({ data, setData, building, unitId }) {
       + " (" + fmtEUR(montant) + ") ? Cette ligne sera définitivement retirée.")) return;
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
-      const entree = (next.ista || []).find(i => i.building === building && i.unit === unitId);
+      const entree = (next.ista || []).find(i => i && i.building === building && i.unit === unitId);
       if (!entree) return next;
       const idx = entree.invoices.findIndex(x => x[0] === dateFacture && x[1] === montant);
       if (idx >= 0) entree.invoices.splice(idx, 1);
@@ -3149,7 +3198,7 @@ function MeterRow({ m, onOpen }) {
       <div className="row" style={{ fontSize: 14 }}>
         <Icon size={16} color={TYPE_COLOR[m.type]} />
         <div>
-          {m.label}{m.subtype ? ` (${m.subtype})` : ""}
+          {String(m.label ?? "")}{m.subtype ? ` (${String(m.subtype)})` : ""}
           <div style={{ fontSize: 11, color: MUTED }}>
             Dernier relevé : {last ? `${fmtDate(last[0])} — index ${fmtNum(last[1], 1)}` : "—"}
           </div>
@@ -3327,6 +3376,7 @@ function MeterDetail({ data, setData, meter, onBack }) {
    ============================================================ */
 function DecomptesView({ data, setData, building }) {
   const b = data.buildings.find(x => x.id === building);
+  if (!b) return <ImmeubleIntrouvable building={building} />;
   const [unitId, setUnitId] = useState(b.units[0]?.id);
   const unit = b.units.find(x => x.id === unitId);
 
@@ -3414,7 +3464,7 @@ function DecomptesView({ data, setData, building }) {
   const elecMeters = unitMeters(data.meters, building, unitId);
   const eauMeters = elecMeters.filter(m => m.type === "eau");
   const elecOnly = elecMeters.filter(m => m.type === "elec");
-  const ista = (data.ista || []).find(i => i.building === building && i.unit === unitId);
+  const ista = (data.ista || []).find(i => i && i.building === building && i.unit === unitId);
 
   // Reprise d'une facture ISTA dans la case « dont ISTA ». ISTA facturant un
   // decompte PARTIEL au depart d'un locataire, un logement peut avoir deux
