@@ -1455,7 +1455,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v46";
+const APP_VERSION = "v47";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1826,8 +1826,9 @@ function AideView() {
           référence.
         </div>
         <div style={{ marginTop: 8 }}>
-          Passé le 7 septembre, un compteur toujours pas relevé <b>reste signalé</b> : cette date est
-          la limite de ce qu'on accepte comme relevé valable, pas la fin de l'alerte.
+          Un compteur relevé <b>plus tard</b> — après le 7 septembre, ou même l'année suivante —
+          est évidemment à jour : il n'est jamais signalé. Seul un relevé <b>antérieur</b> au mois
+          du relevé général manque vraiment.
         </div>
         <div style={{ marginTop: 8 }}>
           Le bandeau affiche les dates : celle du général, la fenêtre attendue, et le dernier relevé
@@ -2530,7 +2531,10 @@ function missingUpToDateMeters(data, building, type, unitNames) {
   const names = [], details = [];
   individual.forEach(m => {
     const last = (Array.isArray(m.readings) && m.readings.length) ? m.readings[m.readings.length - 1][0] : null;
-    const aJour = last && last >= debut && last <= fin;
+    // DEFAUT CORRIGE : un relevé POSTERIEUR a la fenetre etait signale comme
+    // manquant. C'est absurde — un relevé plus recent est forcement a jour.
+    // Seul un relevé TROP ANCIEN, anterieur au mois du relevé general, manque.
+    const aJour = last && last >= debut;
     if (!aJour) {
       const nom = (unitNames && unitNames[m.unit]) || m.unit;
       names.push(nom);
