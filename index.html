@@ -586,6 +586,111 @@ async function saveAutreOneDrive(immeubleNom, uniteNom, locataire, montants, tot
   if (!response.ok) throw new Error("Erreur Make.com : " + response.status);
   return { folderPath, filename };
 }
+/* ===========================================================================
+   DOCUMENT DES LOCATAIRES DEBITEURS — destine a Julien
+   Un seul document recapitulatif, pas un par locataire : c'est une liste de
+   relance, pas un courrier au locataire.
+   =========================================================================== */
+function buildDebiteursDocxXml(lignes) {
+  const INK_HEX = "2E4E3F", PAPER_HEX = "F6F2EA", RED_HEX = "C0392B";
+
+  const titre = docxTable([
+    docxRow([docxCell("LOCATAIRES DÉBITEURS", { bold: true, bg: INK_HEX, color: "FFFFFF", align: "left" })]),
+  ], { nCols: 1 });
+
+  const intro = docxPara(
+    "Liste des locataires dont le décompte laisse un solde en faveur du propriétaire. "
+    + "Document établi le " + fmtDate(todayISO()) + ".",
+    { size: 18, align: "both", spacingAfter: 160 });
+
+  const entete = docxRow([
+    docxCell("Immeuble / logement", { bold: true, bg: PAPER_HEX, align: "left" }),
+    docxCell("Locataire", { bold: true, bg: PAPER_HEX, align: "left" }),
+    docxCell("Dû", { bold: true, bg: PAPER_HEX }),
+    docxCell("Encaissé", { bold: true, bg: PAPER_HEX }),
+    docxCell("Reste", { bold: true, bg: PAPER_HEX }),
+  ]);
+
+  const rangees = [entete];
+  let totalDu = 0, totalEncaisse = 0, totalReste = 0;
+  for (const l of lignes) {
+    totalDu += l.du; totalEncaisse += l.encaisse; totalReste += l.reste;
+    rangees.push(docxRow([
+      docxCell(l.immeuble + " — " + l.logement, { align: "left" }),
+      docxCell(l.locataire || "—", { align: "left" }),
+      docxCell(fmtEUR(l.du)),
+      docxCell(fmtEUR(l.encaisse)),
+      docxCell(fmtEUR(l.reste), { bold: true, color: l.reste > 0 ? RED_HEX : INK_HEX }),
+    ]));
+  }
+  rangees.push(docxRow([
+    docxCell("TOTAL", { bold: true, bg: PAPER_HEX, align: "left" }),
+    docxCell("", { bg: PAPER_HEX }),
+    docxCell(fmtEUR(Math.round(totalDu * 100) / 100), { bold: true, bg: PAPER_HEX }),
+    docxCell(fmtEUR(Math.round(totalEncaisse * 100) / 100), { bold: true, bg: PAPER_HEX }),
+    docxCell(fmtEUR(Math.round(totalReste * 100) / 100), { bold: true, bg: PAPER_HEX, color: RED_HEX }),
+  ]));
+
+  const tableau = docxTable(rangees, { nCols: 5 });
+
+  // le detail des versements, seulement pour ceux qui ont deja paye quelque chose
+  let detail = "";
+  const avecVersements = lignes.filter(l => l.encaisse > 0.005);
+  if (avecVersements.length) {
+    detail += docxPara("Versements reçus", { size: 20, bold: true, spacingAfter: 80 });
+    for (const l of avecVersements) {
+      detail += docxPara((l.locataire || l.logement) + " — " + l.immeuble + " " + l.logement,
+        { size: 18, bold: true, spacingAfter: 40 });
+      const v = Array.isArray(l.montants.versements) ? l.montants.versements : [];
+      for (const ligne of v) {
+        if (!Array.isArray(ligne)) continue;
+        detail += docxPara("    " + fmtDate(ligne[0]) + " — " + fmtEUR(nombreSur(ligne[1])),
+          { size: 18, spacingAfter: 20 });
+      }
+      detail += docxPara("    reste dû : " + fmtEUR(l.reste), { size: 18, bold: true, spacingAfter: 100 });
+    }
+  }
+
+  const date = docxPara("Document établi le " + fmtDate(todayISO()), { size: 18 });
+  return titre + intro + tableau + docxPara("", { size: 18, spacingAfter: 120 }) + detail + date;
+}
+
+async function buildDebiteursBlob(lignes) {
+  const bodyXml = buildDebiteursDocxXml(lignes);
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>${bodyXml}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body>
+</w:document>`;
+  const zip = new window.JSZip();
+  zip.file("[Content_Types].xml", DOCX_CONTENT_TYPES);
+  zip.folder("_rels").file(".rels", DOCX_RELS);
+  zip.folder("word").file("document.xml", documentXml);
+  zip.folder("word").file("styles.xml", DOCX_STYLES);
+  return await zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+}
+
+// Depose le recapitulatif sur OneDrive, a la racine de l'annee : il ne
+// concerne pas un logement en particulier.
+async function saveDebiteursOneDrive(lignes) {
+  const year = String(new Date().getFullYear());
+  const folderPath = year;
+  const filename = "Locataires_debiteurs_" + year + ".docx";
+  const blob = await buildDebiteursBlob(lignes);
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+  const response = await fetch(WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "save_decompte_auto", folderPath, filename, data: base64 })
+  });
+  if (!response.ok) throw new Error("Erreur Make.com : " + response.status);
+  return { folderPath, filename };
+}
+
 /* ===== AUTRES IMMEUBLES — fin des fonctions ============================== */
 
 // Meme dossier et meme action Make que le decompte (save_decompte_auto) :
@@ -1460,7 +1565,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v54";
+const APP_VERSION = "v58";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1922,6 +2027,38 @@ function AideView() {
         <div style={{ marginTop: 8 }}>
           Chaque ligne a un bouton <b>Supprimer</b>, avec confirmation : il sert à effacer
           définitivement les essais. Le document Word déjà déposé sur OneDrive n'est pas touché.
+        </div>
+      </Section>
+
+      <Section titre="Les locataires débiteurs">
+        Le bouton <b>💰 Locataires débiteurs</b>, dans l'onglet Décomptes, réunit ceux dont le
+        décompte laisse un solde <b>en votre faveur</b> : c'est l'inverse d'un remboursement.
+        <div style={{ marginTop: 8 }}>
+          Ils n'apparaissent pas dans la liste des remboursements, qui ne montre que ce que
+          <b> vous</b> avez versé.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <b>Le locataire peut payer en plusieurs fois.</b> Chaque versement s'enregistre avec sa
+          date et son montant, et le <b>reste dû</b> se recalcule. Un versement supérieur au reste
+          est refusé, avec le montant exact rappelé.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Quand la dette est <b>entièrement payée</b>, la ligne disparaît de la liste —
+          l'application <b>demande confirmation avant</b>, puisque vous la perdriez de vue.
+          Si vous refusez, le versement n'est pas enregistré et la ligne reste telle quelle.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <b>Rien n'est définitif :</b> supprimez un versement et la ligne <b>revient</b>, avec le
+          montant correspondant. Une erreur de saisie se corrige donc toujours.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Le bouton <b>Document Word pour Julien</b> produit un récapitulatif de tous les
+          débiteurs, avec le dû, l'encaissé, le reste, le total, et le détail des versements reçus.
+          Il se dépose sur OneDrive dans le dossier de l'année.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Les lignes sont rangées par immeuble et logement, un ordre qui <b>ne bouge pas</b> quand
+          vous enregistrez un versement.
         </div>
       </Section>
 
@@ -3193,6 +3330,86 @@ const REFERENCE_ISTA = {
 
 const referenceIsta = (building, unitId) => REFERENCE_ISTA[building + "|" + unitId] || null;
 
+/* ===========================================================================
+   LOCATAIRES DEBITEURS
+   ---------------------------------------------------------------------------
+   Un remboursement dont le total est NEGATIF signifie l'inverse d'un
+   remboursement : c'est le LOCATAIRE qui reste redevable. Ces lignes
+   n'apparaissaient nulle part — la liste des remboursements ne montre que ce
+   qui a ete rembourse.
+
+   Le locataire peut payer en PLUSIEURS FOIS : chaque versement est enregistre
+   avec sa date, dans `versements`, a cote des montants. Le reste du est
+   recalcule a chaque fois.
+
+   Quand tout est paye, la ligne DISPARAIT de la liste — mais l'application
+   DEMANDE CONFIRMATION avant, puisque Gerard perdrait la ligne de vue.
+   =========================================================================== */
+
+// Somme des versements deja encaisses.
+function totalVersements(m) {
+  const v = (m && Array.isArray(m.versements)) ? m.versements : [];
+  let total = 0;
+  for (const ligne of v) {
+    if (Array.isArray(ligne)) total += nombreSur(ligne[1]);
+  }
+  return Math.round(total * 100) / 100;
+}
+
+// Ce que le locataire doit encore.
+function resteDu(montantDu, m) {
+  return Math.round((nombreSur(montantDu) - totalVersements(m)) * 100) / 100;
+}
+
+// Les locataires qui doivent de l'argent, tous immeubles confondus.
+// Une ligne SOLDEE (soldeLe renseigne) n'y figure plus : Gerard a demande
+// qu'elle disparaisse une fois tout paye.
+function listeDebiteurs(data) {
+  const lignes = [];
+  const immeubles = (data && Array.isArray(data.buildings)) ? data.buildings : [];
+
+  const ajouter = (sorte, cle, m, immeuble, logement, locataire, periode, total, avecDecompte) => {
+    if (!(total < -0.005)) return;          // seuls les soldes negatifs
+    const du = Math.round(Math.abs(total) * 100) / 100;
+    // La ligne disparait quand il ne reste plus rien a encaisser — jamais sur
+    // une simple marque. Retirer un versement la fait REVENIR : sans cela, une
+    // erreur de saisie serait definitive, la ligne n'etant plus affichee.
+    if (resteDu(du, m) <= 0.005) return;
+    lignes.push({
+      sorte, cle, immeuble, logement, locataire, periode,
+      montants: m, du, encaisse: totalVersements(m), reste: resteDu(du, m),
+      avecDecompte,
+    });
+  };
+
+  for (const [cle, m] of Object.entries((data && data.remboursements) || {})) {
+    if (!m || typeof m !== "object") continue;
+    const [immeuble, logement, du, au] = String(cle).split("|");
+    const b = immeubles.find(x => x && x.id === immeuble);
+    const u = b && Array.isArray(b.units) ? b.units.find(x => x && x.id === logement) : null;
+    const dec = (m.decompteUtilise !== undefined) ? m.decompteUtilise : m.decompte;
+    const total = (typeof m.montantRembourse === "number")
+      ? m.montantRembourse
+      : totalRemboursement(m, nombreSur(dec));
+    ajouter("decompte", cle, m, (b && b.name) || immeuble, (u && u.name) || logement,
+      (u && u.tenant) || "", (du && au) ? (fmtDate(du) + " – " + fmtDate(au)) : "", total, true);
+  }
+
+  for (const [cle, m] of Object.entries((data && data.remboursementsAutres) || {})) {
+    if (!m || typeof m !== "object") continue;
+    const [immeuble, logement] = String(cle).split("|");
+    const total = (typeof m.montantRembourse === "number") ? m.montantRembourse : totalAutreImmeuble(m);
+    ajouter("autre", cle, m, NOM_AUTRE_IMMEUBLE[immeuble] || immeuble, logement,
+      m.locataire || "", "", total, false);
+  }
+
+  // Ordre STABLE : immeuble puis logement. Trier par montant paraissait plus
+  // utile, mais la ligne changeait de place a chaque versement enregistre —
+  // on se retrouvait a saisir dans la mauvaise.
+  lignes.sort((a, b) => (a.immeuble + "|" + a.logement).localeCompare(b.immeuble + "|" + b.logement));
+  return lignes;
+}
+
 // Toutes les entrees de remboursement, les deux sortes reunies, pour la liste.
 function listeRemboursements(data) {
   const lignes = [];
@@ -3245,7 +3462,10 @@ function listeRemboursements(data) {
   // donnees presentes dans le fichier n'est jamais acceptable : c'est la faute
   // de la v49, ou les remboursements coches avant l'arrivee du montant fige
   // avaient tous disparu.
-  const payes = lignes.filter(l => l.payeLe);
+  // Un montant NEGATIF n'est pas un remboursement : c'est le locataire qui
+  // doit. Ces lignes ont leur propre ecran, « Locataires débiteurs » — elles ne
+  // disparaissent donc pas, elles sont ailleurs, la ou elles ont un sens.
+  const payes = lignes.filter(l => l.payeLe && !(typeof l.total === "number" && l.total < -0.005));
   payes.sort((a, b) => String(b.payeLe).localeCompare(String(a.payeLe)));
   return payes;
 }
@@ -3634,6 +3854,12 @@ function DecomptesView({ data, setData, building }) {
   const [istaCost, setIstaCost] = useState(0);
   const [istaRepris, setIstaRepris] = useState(null); // derniere facture reprise, pour confirmation
   const [listeOuverte, setListeOuverte] = useState(false);
+  const [debiteursOuvert, setDebiteursOuvert] = useState(false);
+  const [versDate, setVersDate] = useState({});      // cle -> date en cours de saisie
+  const [versMontant, setVersMontant] = useState({});// cle -> montant tape
+  const [versErreur, setVersErreur] = useState({});  // cle -> message
+  const [debBusy, setDebBusy] = useState(false);
+  const [debMsg, setDebMsg] = useState(null);
   const [chauffageTexte, setChauffageTexte] = useState(null);  // frappe en cours dans la case ISTA / mazout
   const [erreurChauffage, setErreurChauffage] = useState(null);
   const [elecConsoTexte, setElecConsoTexte] = useState(null);
@@ -3991,7 +4217,10 @@ function DecomptesView({ data, setData, building }) {
     if (r.vide) {
       setRbErreurs(prev => ({ ...prev, [champ.cle]: null }));
       // Le decompte revient au calcul automatique ; les autres champs valent 0.
-      majRemboursement({ [champ.cle]: champ.cle === "decompte" ? null : 0 });
+      // Vider le champ « decompte » rend la main au calcul automatique : c'est
+      // donc CE montant-la qu'il faut noter, pas l'ancien.
+      majRemboursement({ [champ.cle]: champ.cle === "decompte" ? null : 0,
+        decompteUtilise: champ.cle === "decompte" ? decompteDeBase : rbDecompte });
       return;
     }
     // Etat intermediaire de frappe (« - », « , », « -, ») : ni erreur, ni ecriture.
@@ -4001,7 +4230,12 @@ function DecomptesView({ data, setData, building }) {
       setRbErreurs(prev => ({ ...prev, [champ.cle]: "Ce montant ne peut pas être négatif." })); return;
     }
     setRbErreurs(prev => ({ ...prev, [champ.cle]: null }));
-    majRemboursement({ [champ.cle]: auCentime(r.valeur) });
+    // On note AUSSI le decompte de charges du moment : sans lui, la liste des
+    // debiteurs reclamerait un montant faux. Si c'est LE DECOMPTE qu'on modifie,
+    // c'est la valeur NOUVELLE qu'il faut noter — rbDecompte date du rendu
+    // precedent et le detail affiche contredirait alors le total.
+    const decNote = champ.cle === "decompte" ? auCentime(r.valeur) : rbDecompte;
+    majRemboursement({ [champ.cle]: auCentime(r.valeur), decompteUtilise: decNote });
   };
 
   // En quittant un champ laisse vide, on relache le texte local pour que la
@@ -4049,6 +4283,10 @@ function DecomptesView({ data, setData, building }) {
       garantie: auCentime(gl.garantieEncaissee != null ? gl.garantieEncaissee : (gl.garantieMontant || 0)),
       retardLoyer: auCentime(gl.retardLoyer || 0),
       retardAssurance: auCentime(gl.retardAssurance || 0),
+      // Sans cela, un locataire qui doit UNIQUEMENT a cause de ses charges
+      // n'apparaissait nulle part : Gerard n'ayant aucun degat a saisir, le
+      // decompte n'etait jamais enregistre et la liste le croyait crediteur.
+      decompteUtilise: rbDecompte,
     };
     // N'ECRIT QUE SI QUELQUE CHOSE CHANGE REELLEMENT : sinon, ouvrir le
     // panneau pour regarder suffirait a marquer le fichier comme modifie.
@@ -4293,6 +4531,225 @@ function DecomptesView({ data, setData, building }) {
     });
   };
 
+  if (debiteursOuvert) {
+    const lignes = listeDebiteurs(data);
+    const somme = (f) => Math.round(lignes.reduce((s2, l) => s2 + f(l), 0) * 100) / 100;
+    const totalDu = somme(l => l.du);
+    const totalEncaisse = somme(l => l.encaisse);
+    const totalReste = somme(l => l.reste);
+
+    const majDebiteur = (ligne, patch) => {
+      setData(prev => {
+        const next = JSON.parse(JSON.stringify(prev));
+        const ou = ligne.sorte === "autre" ? "remboursementsAutres" : "remboursements";
+        if (!next[ou]) next[ou] = {};
+        next[ou][ligne.cle] = { ...(next[ou][ligne.cle] || {}), ...patch };
+        return next;
+      });
+    };
+
+    const ajouterVersement = (ligne) => {
+      const cle = ligne.sorte + ligne.cle;
+      const r = analyserNombre(versMontant[cle] || "");
+      if (r.vide) { setVersErreur(p => ({ ...p, [cle]: "Indiquez le montant reçu." })); return; }
+      if (!r.valide) { setVersErreur(p => ({ ...p, [cle]: "Montant non valide." })); return; }
+      if (r.valeur <= 0) { setVersErreur(p => ({ ...p, [cle]: "Le montant doit être positif." })); return; }
+      const montant = auCentime(r.valeur);
+      if (montant > ligne.reste + 0.005) {
+        setVersErreur(p => ({ ...p,
+          [cle]: "Ce versement dépasse le reste dû (" + fmtEUR(ligne.reste) + ")." }));
+        return;
+      }
+      const date = versDate[cle] || todayISO();
+      const anciens = Array.isArray(ligne.montants.versements) ? ligne.montants.versements : [];
+      const nouveaux = [...anciens, [date, montant]]
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+
+      // Tout est paye : la ligne va disparaitre, on le DIT avant.
+      const resteApres = Math.round((ligne.du - montant - ligne.encaisse) * 100) / 100;
+      if (resteApres <= 0.005) {
+        const ok = window.confirm(
+          (ligne.locataire || ligne.logement) + " a soldé sa dette de " + fmtEUR(ligne.du) + ".\n\n"
+          + "Cette ligne va DISPARAÎTRE de la liste des débiteurs.\n\n"
+          + "Confirmer ?");
+        if (!ok) return;
+        majDebiteur(ligne, { versements: nouveaux, soldeLe: date });
+      } else {
+        majDebiteur(ligne, { versements: nouveaux });
+      }
+      setVersMontant(p => ({ ...p, [cle]: "" }));
+      setVersDate(p => ({ ...p, [cle]: "" }));
+      setVersErreur(p => ({ ...p, [cle]: null }));
+    };
+
+    const supprimerVersement = (ligne, index) => {
+      const v = Array.isArray(ligne.montants.versements) ? ligne.montants.versements : [];
+      const cible = v[index];
+      if (!cible) return;
+      if (!window.confirm("Supprimer le versement du " + fmtDate(cible[0])
+        + " (" + fmtEUR(nombreSur(cible[1])) + ") ?")) return;
+      majDebiteur(ligne, { versements: v.filter((_, i) => i !== index) });
+    };
+
+    const envoyerDocument = async () => {
+      if (!lignes.length) return;
+      setDebBusy(true); setDebMsg(null);
+      try {
+        const { folderPath, filename } = await saveDebiteursOneDrive(lignes);
+        setDebMsg({ type: "ok", texte: "Document enregistré : " + DOSSIER_RACINE_DOCUMENTS + " / " + folderPath + " / " + filename });
+      } catch (e) {
+        setDebMsg({ type: "err", texte: "Échec de l'enregistrement : " + e.message });
+      } finally {
+        setDebBusy(false);
+      }
+    };
+
+    const Ligne = ({ l }) => {
+      const cle = l.sorte + l.cle;
+      const versements = Array.isArray(l.montants.versements) ? l.montants.versements : [];
+      return (
+        <div style={{ background: "#fff", borderRadius: 10, padding: "12px 13px", marginTop: 10 }}>
+          <div className="between">
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>{l.locataire || l.logement}</div>
+              <div style={{ fontSize: 13 }}>{l.immeuble} — {l.logement}</div>
+              {l.periode && <div style={{ fontSize: 11.5, color: MUTED }}>{l.periode}</div>}
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 18, fontWeight: 800, color: RED }}>{fmtEUR(l.reste)}</div>
+              <div style={{ fontSize: 11.5, color: MUTED }}>reste dû</div>
+            </div>
+          </div>
+
+          <div style={{ fontSize: 11.5, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
+            Doit {fmtEUR(l.du)}
+            {l.encaisse > 0.005 ? " · déjà reçu " + fmtEUR(l.encaisse) : " · aucun versement reçu"}
+          </div>
+          <div style={{ fontSize: 11.5, color: MUTED, marginTop: 3, lineHeight: 1.5 }}>
+            Garantie {fmtEUR(nombreSur(l.montants.garantie))}
+            {nombreSur(l.montants.retardLoyer) ? " · retard loyer − " + fmtEUR(l.montants.retardLoyer) : ""}
+            {nombreSur(l.montants.retardAssurance) ? " · retard assurance − " + fmtEUR(l.montants.retardAssurance) : ""}
+            {l.avecDecompte && nombreSur(l.montants.decompteUtilise)
+              ? (l.montants.decompteUtilise < 0
+                  ? " · décompte − " + fmtEUR(Math.abs(l.montants.decompteUtilise))
+                  : " · décompte + " + fmtEUR(l.montants.decompteUtilise))
+              : ""}
+            {nombreSur(l.montants.degats) ? " · dégâts − " + fmtEUR(l.montants.degats) : ""}
+          </div>
+
+          {l.montants.commentaire && (
+            <div style={{ fontSize: 12.5, color: INK, marginTop: 6, lineHeight: 1.5,
+              whiteSpace: "pre-wrap", background: PAPER, borderRadius: 6, padding: "6px 8px" }}>
+              {l.montants.commentaire}
+            </div>
+          )}
+
+          {versements.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <span className="label">Versements reçus</span>
+              {versements.map((v, i) => (
+                <div key={i} className="between" style={{ fontSize: 13, padding: "4px 0",
+                  borderTop: i ? `1px solid ${LINE}` : "none" }}>
+                  <span>{fmtDate(v[0])}</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <b>{fmtEUR(nombreSur(v[1]))}</b>
+                    <button className="btn btn-ghost" style={{ padding: "1px 7px", fontSize: 11.5 }}
+                      onClick={() => supprimerVersement(l, i)}>Supprimer</button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${LINE}` }}>
+            <span className="label">Enregistrer un versement</span>
+            <div className="row" style={{ gap: 8, alignItems: "flex-start" }}>
+              <input type="date" style={{ flex: 1 }}
+                value={versDate[cle] || todayISO()}
+                onChange={e => setVersDate(p => ({ ...p, [cle]: e.target.value }))} />
+              <input type="text" inputMode="decimal" placeholder="Montant" style={{ flex: 1 }}
+                value={versMontant[cle] || ""}
+                onChange={e => {
+                  setVersMontant(p => ({ ...p, [cle]: e.target.value }));
+                  setVersErreur(p => ({ ...p, [cle]: null }));
+                }} />
+              <button className="btn btn-primary" style={{ padding: "8px 14px" }}
+                onClick={() => ajouterVersement(l)}>Ajouter</button>
+            </div>
+            {versErreur[cle] && (
+              <div style={{ fontSize: 12, color: RED, marginTop: 4 }}>{versErreur[cle]}</div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    return (
+      <div>
+        <div className="row" style={{ marginBottom: 12 }}>
+          <button className="btn btn-ghost" onClick={() => setDebiteursOuvert(false)}>
+            <ArrowLeft size={15} /> Retour
+          </button>
+        </div>
+
+        <div className="display" style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>
+          Locataires débiteurs
+        </div>
+        <div style={{ fontSize: 13, color: MUTED, marginBottom: 16, lineHeight: 1.5 }}>
+          Ceux dont le décompte laisse un solde en votre faveur. Le locataire peut payer en
+          plusieurs fois : chaque versement s'enregistre avec sa date, et le reste dû se recalcule.
+        </div>
+
+        {debMsg && (
+          <div style={{ fontSize: 13, marginBottom: 12, padding: "10px 12px", borderRadius: 8,
+            lineHeight: 1.5, background: debMsg.type === "ok" ? "#E9F5EE" : "#FDECEA",
+            border: `1px solid ${debMsg.type === "ok" ? "#A8D8BC" : RED}`,
+            color: debMsg.type === "ok" ? "#1B7F4B" : RED, fontWeight: 600 }}>
+            {debMsg.type === "ok" ? "✅ " : "❌ "}{debMsg.texte}
+          </div>
+        )}
+
+        <div className="card">
+          <div className="between"><div style={{ fontWeight: 800 }}>Reste à encaisser</div>
+            <MeterDigits value={fmtEUR(totalReste)} cls="red" /></div>
+          <div className="between" style={{ marginTop: 6, fontSize: 13, color: MUTED }}>
+            <span>Total dû {fmtEUR(totalDu)}</span>
+            <span>déjà reçu {fmtEUR(totalEncaisse)}</span>
+          </div>
+        </div>
+
+        {lignes.length === 0 ? (
+          <div className="card" style={{ textAlign: "center", padding: "28px 16px" }}>
+            <div style={{ fontSize: 34, marginBottom: 8 }}>🎉</div>
+            <div style={{ fontSize: 13.5, color: MUTED, lineHeight: 1.6 }}>
+              <b>Aucun locataire ne vous doit d'argent.</b><br />
+              Une ligne apparaît ici dès qu'un décompte laisse un solde en votre faveur,
+              et disparaît quand la dette est soldée.
+            </div>
+          </div>
+        ) : (
+          <div className="card">
+            {lignes.map(l => <Ligne key={l.sorte + l.cle} l={l} />)}
+          </div>
+        )}
+
+        {lignes.length > 0 && (
+          <button className="btn" onClick={envoyerDocument} disabled={debBusy}
+            style={{ width: "100%", justifyContent: "center", background: ACCENT, color: "#fff",
+              border: "none", marginBottom: 12 }}>
+            <Save size={15} /> {debBusy ? "Envoi en cours…" : "Document Word pour Julien"}
+          </button>
+        )}
+
+        <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.5, padding: "0 4px 12px" }}>
+          Une ligne <b>disparaît</b> quand la dette est entièrement payée — l'application demande
+          confirmation avant. Toute modification n'est enregistrée que par
+          « ☁️ Sauvegarde automatique OneDrive ».
+        </div>
+      </div>
+    );
+  }
+
   if (listeOuverte) {
     const lignes = listeRemboursements(data);
     // listeRemboursements ne renvoie deja QUE les remboursements effectues.
@@ -4438,6 +4895,17 @@ function DecomptesView({ data, setData, building }) {
             background: "#E8E4F0", borderColor: "#CFC7E0", color: INK, fontWeight: 700,
           }}>
           📋 Liste des remboursements
+        </button>
+      </div>
+
+      {/* Ceux qui doivent de l'argent : l'inverse d'un remboursement. */}
+      <div style={{ marginTop: 8, display: "flex", justifyContent: "center" }}>
+        <button className="btn" onClick={() => setDebiteursOuvert(true)}
+          style={{
+            width: "66%", justifyContent: "center", textAlign: "center",
+            background: "#FBE9E7", borderColor: "#E8C4BE", color: "#8A2F22", fontWeight: 700,
+          }}>
+          💰 Locataires débiteurs
         </button>
       </div>
 
