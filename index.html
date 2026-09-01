@@ -1455,7 +1455,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v50";
+const APP_VERSION = "v52";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1898,6 +1898,12 @@ function AideView() {
         <div style={{ marginTop: 8 }}>
           <b>Au moment où vous cochez, le montant affiché est figé</b> — c'est celui que vous avez
           versé, décompte de charges compris. Il n'est jamais recalculé ensuite.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Une ligne peut porter la mention <b>« montant à confirmer »</b> : elle a été cochée
+          avant que l'application n'enregistre ce montant, et son total ne contient donc pas le
+          décompte de charges. <b>Décochez puis recochez</b> dans son panneau pour le corriger.
+          Les autres immeubles ne sont pas concernés : leur calcul est complet.
         </div>
         <div style={{ marginTop: 8 }}>
           Tant que la case n'est pas cochée, le total bouge librement selon ce que vous saisissez.
@@ -3194,9 +3200,14 @@ function listeRemboursements(data) {
       nomLogement: (u && u.name) || logement,
       locataire: (u && u.tenant) || "",
       periode: (du && au) ? (fmtDate(du) + " – " + fmtDate(au)) : "",
-      // Le montant AFFICHE au moment de la coche, jamais recalcule : le decompte
-      // de charges n'est pas enregistre, un recalcul l'oublierait.
-      montants: m, total: m.montantRembourse,
+      // Le montant AFFICHE au moment de la coche. Pour les remboursements
+      // coches AVANT que ce montant soit enregistre, on se replie sur le
+      // calcul : mieux vaut un montant approche qu'une ligne disparue.
+      montants: m,
+      total: typeof m.montantRembourse === "number"
+        ? m.montantRembourse
+        : totalRemboursement(m, m.decompte || 0),
+      montantEstime: typeof m.montantRembourse !== "number",
       payeLe: m.payeLe || null,
     });
   }
@@ -3208,14 +3219,24 @@ function listeRemboursements(data) {
       nomImmeuble: NOM_AUTRE_IMMEUBLE[immeuble] || immeuble,
       nomLogement: logement, locataire: m.locataire || "",
       periode: "",
-      montants: m, total: m.montantRembourse,
+      montants: m,
+      total: typeof m.montantRembourse === "number"
+        ? m.montantRembourse
+        : totalAutreImmeuble(m),
+      // Pas de decompte ici : garantie − retards − degats suffit, et tout est
+      // enregistre. Le montant est exact meme sans avoir ete fige.
+      montantEstime: false,
       payeLe: m.payeLe || null,
     });
   }
 
-  // SEULS LES REMBOURSEMENTS REELLEMENT EFFECTUES. Une liste de preparations
-  // n'apporte rien, et son total serait faux faute de decompte enregistre.
-  const payes = lignes.filter(l => l.payeLe && typeof l.total === "number");
+  // SEULS LES REMBOURSEMENTS REELLEMENT EFFECTUES : une liste de preparations
+  // n'apporte rien. Mais AUCUN AUTRE FILTRE — tout ce qui est coche figure
+  // dans la liste, meme sans montant fige. Faire disparaitre de l'ecran des
+  // donnees presentes dans le fichier n'est jamais acceptable : c'est la faute
+  // de la v49, ou les remboursements coches avant l'arrivee du montant fige
+  // avaient tous disparu.
+  const payes = lignes.filter(l => l.payeLe);
   payes.sort((a, b) => String(b.payeLe).localeCompare(String(a.payeLe)));
   return payes;
 }
@@ -4294,6 +4315,12 @@ function DecomptesView({ data, setData, building }) {
             {l.payeLe && (
               <div style={{ fontSize: 12, color: INK, fontWeight: 600, marginTop: 2 }}>
                 ✓ remboursé le {fmtDate(l.payeLe)}
+              </div>
+            )}
+            {l.montantEstime && (
+              <div style={{ fontSize: 11.5, color: ACCENT, marginTop: 2, lineHeight: 1.4 }}>
+                montant à confirmer — le décompte de charges n'y figure pas.
+                Décochez puis recochez « Remboursé » dans son panneau.
               </div>
             )}
           </div>
