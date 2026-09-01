@@ -1182,9 +1182,9 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
           📬 Envoyer
         </button>
       </div>
-      <div className="no-print" style={{ fontSize: 12.5, color: MUTED, marginBottom: 10, padding: "8px 10px",
-        background: PAPER, borderRadius: 8, lineHeight: 1.5 }}>
-        ☁️ Le décompte est <b>enregistré automatiquement sur OneDrive</b> au moment de son envoi
+      <div className="no-print" style={{ fontSize: 13, color: RED, fontWeight: 600, marginBottom: 10,
+        padding: "10px 12px", background: "#FDECEA", border: `1px solid ${RED}`, borderRadius: 8, lineHeight: 1.5 }}>
+        ⚠️ Le décompte est <b>enregistré automatiquement sur OneDrive</b> au moment de son envoi
         au locataire, avec le document ISTA s'il y en a un. Rien à faire ici.
       </div>
       {shareState === "unsupported" && (
@@ -1460,7 +1460,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v53";
+const APP_VERSION = "v54";
 
 function TopBar({ tab }) {
   const titles = {
