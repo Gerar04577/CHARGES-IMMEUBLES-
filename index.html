@@ -1147,6 +1147,10 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
   };
 
   const [saveOneDriveState, setSaveOneDriveState] = React.useState("idle"); // idle | saving | ok | err
+  // CONSERVE VOLONTAIREMENT, bien que plus appele : le bouton « Sauvegarder le
+  // decompte » a ete retire en v53, l'envoi au locataire deposant deja le
+  // document sur OneDrive. La fonction reste disponible si le besoin revient.
+  // NE PAS LA SUPPRIMER en croyant a du code mort.
   const handleSaveOneDrive = async () => {
     setSaveOneDriveState("saving");
     try {
@@ -1174,13 +1178,14 @@ function DecomptePreview({ b, unit, tenant, period, lines, totals, onClose, onSh
       <div className="no-print row" style={{ marginBottom: 12, flexWrap: "wrap" }}>
         <button className="btn btn-ghost" onClick={onClose}><ArrowLeft size={15} /> Retour</button>
         <button className="btn" onClick={onDownloadDoc} style={{ background: "#4f6ef7", color: "#fff", border: "none" }}><Download size={15} /> Télécharger le .docx</button>
-        <button className="btn btn-success" onClick={handleSaveOneDrive} disabled={saveOneDriveState === "saving"}
-          style={{ background: saveOneDriveState === "ok" ? "#16a34a" : saveOneDriveState === "err" ? "#dc2626" : "linear-gradient(135deg,#16a34a,#15803d)", color: "#fff", border: "none" }}>
-          {saveOneDriveState === "saving" ? "⏳ Sauvegarde…" : saveOneDriveState === "ok" ? "✓ Sauvegardé !" : saveOneDriveState === "err" ? "✗ Erreur" : "☁️ Sauvegarder le décompte (OneDrive)"}
-        </button>
         <button className="btn" onClick={() => window.open('https://gerar04577.github.io/ENVOI-DECOMPTES/charges-envoi.html', '_blank')} style={{ background: "linear-gradient(135deg,#4f6ef7,#7c3aed)", color: "#fff", border: "none" }}>
           📬 Envoyer
         </button>
+      </div>
+      <div className="no-print" style={{ fontSize: 12.5, color: MUTED, marginBottom: 10, padding: "8px 10px",
+        background: PAPER, borderRadius: 8, lineHeight: 1.5 }}>
+        ☁️ Le décompte est <b>enregistré automatiquement sur OneDrive</b> au moment de son envoi
+        au locataire, avec le document ISTA s'il y en a un. Rien à faire ici.
       </div>
       {shareState === "unsupported" && (
         <div className="no-print" style={{ fontSize: 12, color: MUTED, marginBottom: 10, padding: 8, background: PAPER, borderRadius: 8 }}>
@@ -1455,7 +1460,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v52";
+const APP_VERSION = "v53";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1862,6 +1867,10 @@ function AideView() {
           • le <b>mail au locataire</b>, avec le décompte Word en pièce jointe ;<br />
           • pour Petite Guirlande, le <b>décompte ISTA</b> de ce locataire, joint lui aussi ;<br />
           • et les <b>deux fichiers déposés sur OneDrive</b>.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <b>Vous n'avez rien à enregistrer vous-même</b> : le bouton « Sauvegarder le décompte »
+          a disparu de l'aperçu, l'envoi s'en charge.
         </div>
         <div style={{ marginTop: 8 }}>
           Ils vont dans <b>SAUVEGARDE DECOMPTES / année / immeuble / logement</b>, par exemple
