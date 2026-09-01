@@ -672,9 +672,19 @@ async function buildDebiteursBlob(lignes) {
 // Depose le recapitulatif sur OneDrive, a la racine de l'annee : il ne
 // concerne pas un logement en particulier.
 async function saveDebiteursOneDrive(lignes) {
-  const year = String(new Date().getFullYear());
+  // UNE SEULE lecture de l'heure : deux appels a new Date() pouvaient placer le
+  // dossier dans une annee et le nom dans l'autre, la nuit du 31 decembre.
+  const d = new Date();
+  const year = String(d.getFullYear());
   const folderPath = year;
-  const filename = "Locataires_debiteurs_" + year + ".docx";
+  // La DATE ET L'HEURE dans le nom : chaque relance envoyee a Julien garde sa
+  // trace, au lieu d'ecraser la precedente. Le connecteur OneDrive refuse en
+  // outre un nom deja pris (erreur 409), meme regle sur « Replace ».
+  const horodatage = d.getFullYear()
+    + "-" + ("0" + (d.getMonth() + 1)).slice(-2)
+    + "-" + ("0" + d.getDate()).slice(-2)
+    + "_" + ("0" + d.getHours()).slice(-2) + ("0" + d.getMinutes()).slice(-2);
+  const filename = "Locataires_debiteurs_" + horodatage + ".docx";
   const blob = await buildDebiteursBlob(lignes);
   const base64 = await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1565,7 +1575,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v59";
+const APP_VERSION = "v62";
 
 function TopBar({ tab }) {
   const titles = {
@@ -2054,7 +2064,17 @@ function AideView() {
         <div style={{ marginTop: 8 }}>
           Le bouton <b>Document Word pour Julien</b> produit un récapitulatif de tous les
           débiteurs, avec le dû, l'encaissé, le reste, le total, et le détail des versements reçus.
-          Il se dépose sur OneDrive dans le dossier de l'année.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Il <b>enregistre d'abord les versements sur OneDrive</b>, puis crée le document. Si
+          l'enregistrement échoue, <b>aucun document n'est créé</b> : Julien ne recevra jamais un
+          récapitulatif annonçant des versements qui ne sont pas enregistrés.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Il se dépose dans <b>SAUVEGARDE DECOMPTES / année /</b>, à côté des dossiers d'immeubles,
+          sous un nom qui porte <b>la date et l'heure</b> — par exemple
+          <i> Locataires_debiteurs_2026-09-01_1343.docx</i>. Chaque relance garde ainsi sa trace :
+          rien n'est écrasé.
         </div>
         <div style={{ marginTop: 8 }}>
           Les lignes sont rangées par immeuble et logement, un ordre qui <b>ne bouge pas</b> quand
@@ -3859,6 +3879,9 @@ function DecomptesView({ data, setData, building }) {
   const [versMontant, setVersMontant] = useState({});// cle -> montant tape
   const [versErreur, setVersErreur] = useState({});  // cle -> message
   const [debBusy, setDebBusy] = useState(false);
+  // Verrou SYNCHRONE : setDebBusy est differe, deux appuis rapides passeraient
+  // tous les deux et Julien recevrait deux documents identiques.
+  const verrouDocDebiteurs = useRef(false);
   const [debMsg, setDebMsg] = useState(null);
   const [chauffageTexte, setChauffageTexte] = useState(null);  // frappe en cours dans la case ISTA / mazout
   const [erreurChauffage, setErreurChauffage] = useState(null);
@@ -4592,15 +4615,29 @@ function DecomptesView({ data, setData, building }) {
     };
 
     const envoyerDocument = async () => {
-      if (!lignes.length) return;
+      if (!lignes.length || verrouDocDebiteurs.current) return;   // deuxieme appui : ignore
+      verrouDocDebiteurs.current = true;
       setDebBusy(true); setDebMsg(null);
       try {
+        // MEME REGLE QUE LES DEUX AUTRES BOUTONS WORD (v32) : les montants
+        // d'abord, le document ensuite. Un document remis a Julien doit
+        // correspondre a ce qui est reellement enregistre sur OneDrive.
+        const sauv = await enregistrerDonneesOneDrive(data);
+        if (!sauv.ok) {
+          setDebMsg({ type: "err", texte: sauv.conflit
+            ? "Rien n'a été enregistré : quelqu'un d'autre a enregistré entre-temps. Rechargez la page, puis recommencez."
+            : "Rien n'a été enregistré : " + sauv.motif + ". Le document n'a pas été créé." });
+          return;
+        }
         const { folderPath, filename } = await saveDebiteursOneDrive(lignes);
-        setDebMsg({ type: "ok", texte: "Document enregistré : " + DOSSIER_RACINE_DOCUMENTS + " / " + folderPath + " / " + filename });
+        setDebMsg({ type: "ok", texte: "✓ Versements enregistrés · Document créé dans "
+          + cheminLisible(folderPath, filename) });
       } catch (e) {
-        setDebMsg({ type: "err", texte: "Échec de l'enregistrement : " + e.message });
+        // On distingue les deux echecs : les versements peuvent etre enregistres
+        // alors que seul le document a echoue — le message doit le dire.
+        setDebMsg({ type: "err", texte: "Le document n'a pas pu être créé : " + e.message });
       } finally {
-        setDebBusy(false);
+        setDebBusy(false); verrouDocDebiteurs.current = false;
       }
     };
 
