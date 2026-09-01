@@ -1565,7 +1565,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v58";
+const APP_VERSION = "v59";
 
 function TopBar({ tab }) {
   const titles = {
@@ -4604,11 +4604,11 @@ function DecomptesView({ data, setData, building }) {
       }
     };
 
-    const Ligne = ({ l }) => {
+    const ligneDebiteur = (l) => {
       const cle = l.sorte + l.cle;
       const versements = Array.isArray(l.montants.versements) ? l.montants.versements : [];
       return (
-        <div style={{ background: "#fff", borderRadius: 10, padding: "12px 13px", marginTop: 10 }}>
+        <div key={l.sorte + l.cle} style={{ background: "#fff", borderRadius: 10, padding: "12px 13px", marginTop: 10 }}>
           <div className="between">
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 800, fontSize: 15 }}>{l.locataire || l.logement}</div>
@@ -4729,7 +4729,7 @@ function DecomptesView({ data, setData, building }) {
           </div>
         ) : (
           <div className="card">
-            {lignes.map(l => <Ligne key={l.sorte + l.cle} l={l} />)}
+            {lignes.map(l => ligneDebiteur(l))}
           </div>
         )}
 
@@ -4768,8 +4768,8 @@ function DecomptesView({ data, setData, building }) {
       });
     };
 
-    const Ligne = ({ l }) => (
-      <div style={{ background: "#fff", borderRadius: 10, padding: "10px 12px", marginTop: 8 }}>
+    const ligneRemboursement = (l) => (
+      <div key={l.sorte + l.cle} style={{ background: "#fff", borderRadius: 10, padding: "10px 12px", marginTop: 8 }}>
         <div className="between">
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 800, fontSize: 15, color: l.total < 0 ? "#b91c1c" : INK }}>
@@ -4841,7 +4841,7 @@ function DecomptesView({ data, setData, building }) {
               « Remboursé » dans son panneau.
             </div>
           )}
-          {payes.map(l => <Ligne key={l.sorte + l.cle} l={l} />)}
+          {payes.map(l => ligneRemboursement(l))}
         </div>
 
         <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.5, padding: "0 4px 12px" }}>
