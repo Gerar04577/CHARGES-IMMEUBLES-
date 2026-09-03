@@ -1575,7 +1575,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v62";
+const APP_VERSION = "v63";
 
 function TopBar({ tab }) {
   const titles = {
@@ -2037,6 +2037,24 @@ function AideView() {
         <div style={{ marginTop: 8 }}>
           Chaque ligne a un bouton <b>Supprimer</b>, avec confirmation : il sert à effacer
           définitivement les essais. Le document Word déjà déposé sur OneDrive n'est pas touché.
+        </div>
+      </Section>
+
+      <Section titre="Le montant ISTA ou mazout du décompte">
+        La case <b>« dont ISTA »</b> (ou « Mazout ») du décompte est désormais <b>enregistrée</b>,
+        pour ce logement et cette période, comme les relevés de compteurs.
+        <div style={{ marginTop: 8 }}>
+          Avant, ce montant ne vivait qu'à l'écran : changer de logement le remettait à zéro, et
+          recharger l'application le perdait. Le document Word partait juste, mais le décompte relu
+          ensuite — <b>celui qui sert au remboursement</b> — était faux.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Il est attaché à la <b>période</b> : changer les dates du décompte repart d'une case vide,
+          puisqu'une facture ISTA couvre une période donnée.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          Comme tout le reste, il n'est déposé sur OneDrive que par
+          « ☁️ Sauvegarde automatique OneDrive ».
         </div>
       </Section>
 
@@ -3872,6 +3890,10 @@ function DecomptesView({ data, setData, building }) {
   // (e.g. RDC Commercial / privateMeterOnly).
   const [mazoutCost, setMazoutCost] = useState(0);
   const [istaCost, setIstaCost] = useState(0);
+  // Cle (logement + periode) pour laquelle la saisie a l'ecran est valable.
+  // Un simple drapeau ne suffirait pas : changer de PERIODE change la cle, et
+  // le montant tape pour l'ancienne s'appliquerait a la nouvelle.
+  const [chauffageCle, setChauffageCle] = useState(null);
   const [istaRepris, setIstaRepris] = useState(null); // derniere facture reprise, pour confirmation
   const [listeOuverte, setListeOuverte] = useState(false);
   const [debiteursOuvert, setDebiteursOuvert] = useState(false);
@@ -3935,7 +3957,7 @@ function DecomptesView({ data, setData, building }) {
   // Les deux passent desormais par la meme fonction.
   const changerLogement = (id) => {
     setUnitId(id);
-    setMoisNonPayesTexte(null); setErreurMoisNonPayes(null); setProvisionTexte(null); setErreurProvision(null); setRbOuvert(false); setRbTextes({}); setRbErreurs({}); setRbMsg(null); setCmpOuvert(false); setRbDoute(null); setCmpErreur(null); setRbInfo(null); setAutOuvert(false); setAutApercu(false); setAutMsg(null); setElecConsoOverride(null); setEauConsoOverride(null); setMazoutCost(0); setIstaCost(0); setIstaRepris(null); setChauffageTexte(null); setErreurChauffage(null); setElecConsoTexte(null); setErreurElecConso(null); setEauConsoTexte(null); setErreurEauConso(null); setPeriodFromOverride(null); setPeriodToOverride(null);
+    setMoisNonPayesTexte(null); setErreurMoisNonPayes(null); setProvisionTexte(null); setErreurProvision(null); setRbOuvert(false); setRbTextes({}); setRbErreurs({}); setRbMsg(null); setCmpOuvert(false); setRbDoute(null); setCmpErreur(null); setRbInfo(null); setAutOuvert(false); setAutApercu(false); setAutMsg(null); setElecConsoOverride(null); setEauConsoOverride(null); setMazoutCost(0); setIstaCost(0); setIstaRepris(null); setChauffageTexte(null); setErreurChauffage(null); setChauffageCle(null); setElecConsoTexte(null); setErreurElecConso(null); setEauConsoTexte(null); setErreurEauConso(null); setPeriodFromOverride(null); setPeriodToOverride(null);
   };
 
   // DEFAUT 16 : changer d'onglet d'immeuble appelait setUnitId DIRECTEMENT, sans
@@ -3966,9 +3988,24 @@ function DecomptesView({ data, setData, building }) {
   // decompte PARTIEL au depart d'un locataire, un logement peut avoir deux
   // factures la meme annee : Gerard choisit donc la ligne, jamais l'application.
   const reprendreFactureIsta = (montant) => {
-    setIstaCost(auCentime(montant));
-    setIstaRepris(auCentime(montant));
+    const v = auCentime(montant);
+    setIstaCost(v);
+    setIstaRepris(v);
     setChauffageTexte(null); setErreurChauffage(null);
+    setChauffageCle(cleAjust);
+    enregistrerChauffage(v);
+  };
+
+  // Ecrit le montant de chauffage dans le fichier, sous la cle du logement et
+  // de la periode. Appele UNIQUEMENT sur une action de Gerard : ouvrir l'ecran
+  // n'ecrit toujours rien.
+  const enregistrerChauffage = (valeur) => {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.chauffageSaisi) next.chauffageSaisi = {};
+      next.chauffageSaisi[cleAjust] = valeur;
+      return next;
+    });
   };
 
   // Saisie de la case « dont ISTA » (ou mazout) : virgule francaise acceptee,
@@ -3976,14 +4013,16 @@ function DecomptesView({ data, setData, building }) {
   const saisirChauffage = (txt) => {
     setChauffageTexte(txt);
     const poser = unit.hasIsta ? setIstaCost : setMazoutCost;
+    setChauffageCle(cleAjust);
     const r = analyserNombre(txt);
-    if (r.vide) { setErreurChauffage(null); poser(0); setIstaRepris(null); return; }
+    if (r.vide) { setErreurChauffage(null); poser(0); setIstaRepris(null); enregistrerChauffage(0); return; }
     if (/^-?[.,]?$/.test(txt.trim())) { setErreurChauffage(null); return; }
     if (!r.valide) { setErreurChauffage("Montant invalide."); return; }
     if (r.valeur < 0) { setErreurChauffage("Ce montant ne peut pas être négatif."); return; }
     setErreurChauffage(null);
     poser(auCentime(r.valeur));
     setIstaRepris(null);
+    enregistrerChauffage(auCentime(r.valeur));
   };
 
   // Saisie d'une consommation forcee : meme regle que partout ailleurs.
@@ -4160,7 +4199,19 @@ function DecomptesView({ data, setData, building }) {
       mazoutNimyAuto = Math.round(remainderAnnual * (months / 12) * 100) / 100;
     }
   }
-  const firstLineCost = skipHeatingRow ? 0 : (unit.hasIsta ? istaCost : (building === "nimy" ? (mazoutCost || mazoutNimyAuto) : mazoutCost));
+  // Montant enregistre pour ce logement et cette periode, s'il existe. Il prend
+  // la main tant que rien n'a ete tape a l'ecran : sans cela, changer de
+  // logement puis revenir affichait zero et FAUSSAIT le decompte, donc aussi le
+  // remboursement qui s'en sert.
+  const chauffageSaisiSain = (data.chauffageSaisi && typeof data.chauffageSaisi === "object"
+    && !Array.isArray(data.chauffageSaisi)) ? data.chauffageSaisi : {};
+  const chauffageEnregistre = chauffageSaisiSain[cleAjust];
+  const saisieValable = chauffageCle === cleAjust;
+  const chauffageRelu = (!saisieValable && typeof chauffageEnregistre === "number")
+    ? chauffageEnregistre : null;
+  const istaEffectif = chauffageRelu !== null ? chauffageRelu : istaCost;
+  const mazoutEffectif = chauffageRelu !== null ? chauffageRelu : mazoutCost;
+  const firstLineCost = skipHeatingRow ? 0 : (unit.hasIsta ? istaEffectif : (building === "nimy" ? (mazoutEffectif || mazoutNimyAuto) : mazoutEffectif));
   const total = firstLineCost + elecCost + eauCost;
   const diff = provision - total;
 
@@ -5446,7 +5497,7 @@ function DecomptesView({ data, setData, building }) {
                   <td>
                     <input type="text" inputMode="decimal" placeholder="0"
                       value={chauffageTexte !== null ? chauffageTexte
-                        : ((unit.hasIsta ? istaCost : (building === "nimy" ? (mazoutCost || mazoutNimyAuto) : mazoutCost)) || "")}
+                        : ((unit.hasIsta ? istaEffectif : (building === "nimy" ? (mazoutEffectif || mazoutNimyAuto) : mazoutEffectif)) || "")}
                       onChange={e => saisirChauffage(e.target.value)}
                       onBlur={quitterChauffage}
                       style={{ width: 90, textAlign: "right" }} />
