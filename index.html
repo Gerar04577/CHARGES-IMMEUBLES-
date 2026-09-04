@@ -156,6 +156,13 @@ function EvolutionChart({ readings, dataKey, color, unitLabel }) {
    ============================================================ */
 function xmlEscape(s) {
   return String(s ?? "")
+    // v64 (A1) — La norme XML 1.0 interdit les caracteres de controle dans un
+    // document. Ils n'arrivent pas par hasard : un nom colle depuis un PDF, un
+    // bail scanne ou un courriel en contient parfois. Sans ce filtre, le .docx
+    // produit est refuse par Word ("document corrompu") alors que l'application
+    // vient d'annoncer "Document cree". On les retire AVANT tout echappement.
+    // Tabulation, saut de ligne et retour chariot sont admis par la norme.
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -1215,7 +1222,15 @@ function cleanPath(str) {
   return String(str === null || str === undefined ? "" : str)
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, "_")
-    .replace(/[^A-Za-z0-9_-]/g, "");
+    // v64 (A2) — Les caracteres interdits sont REMPLACES par un souligne, et non
+    // plus supprimes. En les supprimant, deux designations differentes pouvaient
+    // produire le meme nom de dossier ("Studio 5/6" et "Studio 56" donnaient tous
+    // deux "Studio_56"), et le document de l'un ecrasait celui de l'autre sans
+    // aucun message.
+    .replace(/[^A-Za-z0-9_-]/g, "_")
+    // Un separateur repete ou en bordure n'apporte rien et alourdit le nom.
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 async function saveDecompteOneDrive(buildingName, unitName, tenantName, period, lines, totals) {
@@ -1575,7 +1590,7 @@ function App() {
   );
 }
 
-const APP_VERSION = "v63";
+const APP_VERSION = "v64";
 
 function TopBar({ tab }) {
   const titles = {
@@ -1822,7 +1837,7 @@ function AideView() {
             ce qui a déjà été payé, et la même chose pour l'assurance.
           </li>
           <li style={{ marginBottom: 6 }}>
-            Toujours dans Gestion Loyers : bouton <b>📋 Liste remboursement</b>, puis, au-dessus du
+            Toujours dans Gestion Loyers : bouton <b>📋 Dettes en cours</b>, puis, au-dessus du
             tableau qui s'affiche, bouton vert <b>📤 Enregistrer sur OneDrive</b>. Un fichier est
             déposé dans <i>Immobilier 2025-2026 › AGestion Charges › Calcul charges et compteurs</i>.
           </li>
@@ -5197,7 +5212,7 @@ function DecomptesView({ data, setData, building }) {
                 Pas de connexion — lecture impossible : {cmpErreur}
                 <div style={{ marginTop: 4, fontWeight: 400 }}>
                   Vérifie que la liste a bien été enregistrée depuis Gestion Loyers
-                  (vue « 📋 Liste remboursement », bouton « 📤 Enregistrer sur OneDrive »).
+                  (vue « 📋 Dettes en cours », bouton « 📤 Enregistrer sur OneDrive »).
                 </div>
               </div>
               <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={chargerComparaison} disabled={cmpBusy}>
